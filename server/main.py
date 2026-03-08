@@ -47,11 +47,7 @@ class VroomServer:
 
     async def _run_task(self, text):
         try:
-            tab_info = await self._request({"type": "get_tab_info"})
-            start_url = tab_info["url"]
-            print(f"[vroom] Starting URL: {start_url}")
-
-            extractor = Extractor(self, start_url)
+            extractor = Extractor(self)
             await extractor.run(text)
 
         except Exception as e:
@@ -76,11 +72,12 @@ class VroomServer:
         })
         return result
 
-    async def open_tabs(self, count, url):
+    async def open_tabs(self, count, url, task=""):
         result = await self._request({
             "type": "open_tabs",
             "count": count,
             "url": url,
+            "task": task,
         })
         tab_ids = result["tabIds"]
         print(f"[vroom] Opened {len(tab_ids)} tabs: {tab_ids}")

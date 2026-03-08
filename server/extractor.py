@@ -102,9 +102,8 @@ TOOLS = [
 
 
 class Extractor:
-    def __init__(self, server, start_url):
+    def __init__(self, server):
         self.server = server
-        self.start_url = start_url
         self.client = genai.Client()
         self._executor_counter = 0
         self._running = {}  # executor_id -> asyncio.Task
@@ -242,7 +241,7 @@ class Extractor:
         executor_id = f"exec_{self._executor_counter}"
 
         async def _run_executor():
-            tab_ids = await self.server.open_tabs(1, self.start_url)
+            tab_ids = await self.server.open_tabs(1, "about:blank", subtask)
             tab_id = tab_ids[0]
             try:
                 agent = Agent(self.server, tab_id)

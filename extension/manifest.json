@@ -19,5 +19,11 @@
   ],
   "action": {
     "default_title": "Vroom"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["dashboard.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }
