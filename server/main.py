@@ -2,7 +2,6 @@ import asyncio
 import json
 from dotenv import load_dotenv
 import websockets
-from agent import Agent
 from extractor import Extractor
 
 load_dotenv()
@@ -37,7 +36,6 @@ class VroomServer:
             async for message in websocket:
                 data = json.loads(message)
 
-                # Route responses back to pending futures
                 rid = data.get("requestId")
                 if rid and rid in self._pending:
                     self._pending.pop(rid).set_result(data)
@@ -49,42 +47,12 @@ class VroomServer:
 
     async def _run_task(self, text):
         try:
-            # Get current tab info
             tab_info = await self._request({"type": "get_tab_info"})
-            current_tab_id = tab_info["tabId"]
-            current_url = tab_info["url"]
-            print(f"[vroom] Current tab: {current_tab_id}, URL: {current_url}")
+            start_url = tab_info["url"]
+            print(f"[vroom] Starting URL: {start_url}")
 
-            # Decompose task
-            extractor = Extractor()
-            subtasks = await extractor.decompose(text)
-
-            if len(subtasks) == 1:
-                # Single subtask — run on the current tab
-                agent = Agent(self, current_tab_id)
-                result = await agent.run(subtasks[0])
-                await self.send_complete(result)
-            else:
-                # Multiple subtasks — open new tabs and run in parallel
-                await self.send_status(f"Decomposed into {len(subtasks)} subtasks")
-                tab_ids = await self.open_tabs(len(subtasks), current_url)
-
-                agents = [Agent(self, tid) for tid in tab_ids]
-                tasks = [
-                    agent.run(subtask)
-                    for agent, subtask in zip(agents, subtasks)
-                ]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-
-                summaries = []
-                for i, result in enumerate(results):
-                    if isinstance(result, Exception):
-                        summaries.append(f"Subtask {i+1} failed: {result}")
-                    else:
-                        summaries.append(f"Subtask {i+1}: {result}")
-
-                await self.close_tabs(tab_ids)
-                await self.send_complete("\n".join(summaries))
+            extractor = Extractor(self, start_url)
+            await extractor.run(text)
 
         except Exception as e:
             import traceback
