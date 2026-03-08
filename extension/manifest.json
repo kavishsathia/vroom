@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Vroom",
+  "version": "0.1.0",
+  "description": "Virtual Room - AI Browser Agent",
+  "permissions": ["sidePanel", "tabs", "activeTab", "offscreen", "debugger"],
+  "host_permissions": ["<all_urls>"],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ],
+  "action": {
+    "default_title": "Vroom"
+  }
+}

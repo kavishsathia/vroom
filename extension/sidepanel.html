@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 16px; margin: 0; }
+    h3 { margin-top: 0; }
+    #task { width: 100%; padding: 8px; box-sizing: border-box; resize: vertical; }
+    button { margin-top: 8px; padding: 8px 16px; cursor: pointer; }
+    #mic { background: #e0e0e0; }
+    #mic.active { background: #f44336; color: white; }
+    #status { margin-top: 8px; font-size: 13px; color: #666; }
+    #log { margin-top: 12px; font-size: 13px; white-space: pre-wrap; max-height: 400px; overflow-y: auto; }
+    .log-entry { padding: 4px 0; border-bottom: 1px solid #eee; }
+  </style>
+</head>
+<body>
+  <h3>Vroom</h3>
+  <textarea id="task" rows="3" placeholder="Or type a task..."></textarea>
+  <br>
+  <button id="mic">Start Mic</button>
+  <button id="send">Send Text</button>
+  <div id="status"></div>
+  <div id="log"></div>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
