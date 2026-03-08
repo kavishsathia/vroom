@@ -2,7 +2,8 @@ import asyncio
 import json
 from dotenv import load_dotenv
 import websockets
-from expressor import Expressor
+from agent import Agent
+from extractor import Extractor
 
 load_dotenv()
 
@@ -10,66 +11,118 @@ load_dotenv()
 class VroomServer:
     def __init__(self):
         self.ws = None
-        self._screenshot_future = None
-        self._action_future = None
-        self.latest_frame = None
-        self.frame_event = asyncio.Event()
-        self.expressor = None
+        self._pending = {}  # requestId -> future
+        self._request_counter = 0
+
+    def _next_id(self):
+        self._request_counter += 1
+        return str(self._request_counter)
+
+    async def _request(self, msg):
+        """Send a message and wait for the response with matching requestId."""
+        rid = self._next_id()
+        msg["requestId"] = rid
+        future = asyncio.get_event_loop().create_future()
+        self._pending[rid] = future
+        await self.ws.send(json.dumps(msg))
+        result = await future
+        return result
 
     async def handle_connection(self, websocket):
         self.ws = websocket
         print("[vroom] Extension connected")
-
-        # Start the expressor session immediately
-        self.expressor = Expressor(self)
-        expressor_task = asyncio.create_task(self.expressor.run())
+        await self.send_status("Connected")
 
         try:
             async for message in websocket:
                 data = json.loads(message)
 
-                if data["type"] == "task":
-                    # Send text task to the live session
-                    if self.expressor and self.expressor.session:
-                        await self.expressor.send_text(data["text"])
-
-                elif data["type"] == "audio":
-                    # Forward mic audio to the live session
-                    if self.expressor and self.expressor.session:
-                        await self.expressor.send_audio(data["data"])
-                    else:
-                        print("[vroom] Audio received but no expressor session")
-
-                elif data["type"] == "frame":
-                    self.latest_frame = data["data"]
-                    self.frame_event.set()
-                    # Also forward to live session
-                    if self.expressor and self.expressor.session:
-                        await self.expressor.send_frame(data["data"])
-
-                elif data["type"] == "screenshot_response":
-                    if self._screenshot_future and not self._screenshot_future.done():
-                        self._screenshot_future.set_result(data["data"])
-
-                elif data["type"] == "action_result":
-                    if self._action_future and not self._action_future.done():
-                        self._action_future.set_result(data)
+                # Route responses back to pending futures
+                rid = data.get("requestId")
+                if rid and rid in self._pending:
+                    self._pending.pop(rid).set_result(data)
+                elif data["type"] == "task":
+                    asyncio.create_task(self._run_task(data["text"]))
 
         except websockets.exceptions.ConnectionClosed:
             print("[vroom] Extension disconnected")
-        finally:
-            expressor_task.cancel()
-            self.expressor = None
 
-    async def request_screenshot(self):
-        self._screenshot_future = asyncio.get_event_loop().create_future()
-        await self.ws.send(json.dumps({"type": "screenshot_request"}))
-        return await self._screenshot_future
+    async def _run_task(self, text):
+        try:
+            # Get current tab info
+            tab_info = await self._request({"type": "get_tab_info"})
+            current_tab_id = tab_info["tabId"]
+            current_url = tab_info["url"]
+            print(f"[vroom] Current tab: {current_tab_id}, URL: {current_url}")
 
-    async def send_action(self, action):
-        self._action_future = asyncio.get_event_loop().create_future()
-        await self.ws.send(json.dumps(action))
-        return await self._action_future
+            # Decompose task
+            extractor = Extractor()
+            subtasks = await extractor.decompose(text)
+
+            if len(subtasks) == 1:
+                # Single subtask — run on the current tab
+                agent = Agent(self, current_tab_id)
+                result = await agent.run(subtasks[0])
+                await self.send_complete(result)
+            else:
+                # Multiple subtasks — open new tabs and run in parallel
+                await self.send_status(f"Decomposed into {len(subtasks)} subtasks")
+                tab_ids = await self.open_tabs(len(subtasks), current_url)
+
+                agents = [Agent(self, tid) for tid in tab_ids]
+                tasks = [
+                    agent.run(subtask)
+                    for agent, subtask in zip(agents, subtasks)
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                summaries = []
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        summaries.append(f"Subtask {i+1} failed: {result}")
+                    else:
+                        summaries.append(f"Subtask {i+1}: {result}")
+
+                await self.close_tabs(tab_ids)
+                await self.send_complete("\n".join(summaries))
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await self.send_status(f"Error: {e}")
+
+    # --- Extension API ---
+
+    async def request_screenshot(self, tab_id):
+        result = await self._request({
+            "type": "screenshot_request",
+            "tabId": tab_id,
+        })
+        return result["data"]
+
+    async def send_action(self, tab_id, action_data):
+        result = await self._request({
+            "type": "action",
+            "tabId": tab_id,
+            **action_data,
+        })
+        return result
+
+    async def open_tabs(self, count, url):
+        result = await self._request({
+            "type": "open_tabs",
+            "count": count,
+            "url": url,
+        })
+        tab_ids = result["tabIds"]
+        print(f"[vroom] Opened {len(tab_ids)} tabs: {tab_ids}")
+        return tab_ids
+
+    async def close_tabs(self, tab_ids):
+        await self.ws.send(json.dumps({
+            "type": "close_tabs",
+            "tabIds": tab_ids,
+        }))
 
     async def send_status(self, message):
         print(f"[vroom] {message}")

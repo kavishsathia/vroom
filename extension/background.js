@@ -1,31 +1,13 @@
 let ws = null;
 let sidepanelPort = null;
-let micPort = null;
-let frameInterval = null;
-let targetWindowId = null;
-let targetTabId = null;
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name === 'sidepanel') {
     sidepanelPort = port;
     connectWebSocket();
 
-    // Save the current tab/window as the target before anything else
-    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-      if (tab) {
-        targetTabId = tab.id;
-        targetWindowId = tab.windowId;
-        console.log('[Vroom] Target tab:', targetTabId, 'window:', targetWindowId);
-        startFrameCapture();
-      }
-    });
-
     port.onMessage.addListener((msg) => {
-      if (msg.type === 'start_mic') {
-        openMicPopup();
-      } else if (msg.type === 'stop_mic') {
-        if (micPort) micPort.postMessage({ type: 'stop_mic' });
-      } else if (msg.type === 'task') {
+      if (msg.type === 'task') {
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify(msg));
         }
@@ -34,43 +16,9 @@ chrome.runtime.onConnect.addListener((port) => {
 
     port.onDisconnect.addListener(() => {
       sidepanelPort = null;
-      stopFrameCapture();
-      if (micPort) micPort.postMessage({ type: 'stop_mic' });
-    });
-
-  } else if (port.name === 'mic') {
-    micPort = port;
-
-    port.onMessage.addListener((msg) => {
-      if (msg.type === 'audio_chunk') {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'audio', data: msg.data }));
-        }
-      } else if (msg.type === 'mic_started') {
-        console.log('[Vroom] Mic recording started');
-        if (sidepanelPort) sidepanelPort.postMessage({ type: 'status', message: 'Mic recording' });
-      } else if (msg.type === 'mic_error') {
-        console.error('[Vroom] Mic error:', msg.error);
-        if (sidepanelPort) sidepanelPort.postMessage({ type: 'status', message: 'Mic error: ' + msg.error });
-      }
-    });
-
-    port.onDisconnect.addListener(() => {
-      micPort = null;
-      console.log('[Vroom] Mic popup closed');
     });
   }
 });
-
-function openMicPopup() {
-  chrome.windows.create({
-    url: 'mic.html',
-    type: 'popup',
-    width: 320,
-    height: 120,
-    focused: false,
-  });
-}
 
 function connectWebSocket() {
   if (ws && ws.readyState === WebSocket.OPEN) return;
@@ -82,32 +30,52 @@ function connectWebSocket() {
     if (sidepanelPort) sidepanelPort.postMessage({ type: 'status', message: 'Connected to server' });
   };
 
-  ws.onmessage = (event) => {
+  ws.onmessage = async (event) => {
     const data = JSON.parse(event.data);
+    const rid = data.requestId;
 
-    if (data.type === 'action') {
-      if (targetTabId) {
-        if (data.action === 'click') {
-          // Use Chrome DevTools Protocol for trusted click events
-          performTrustedClick(targetTabId, data.x, data.y).then(() => {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'action_result', success: true }));
-            }
-          });
-        } else {
-          chrome.tabs.sendMessage(targetTabId, data, (response) => {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'action_result', success: response?.success ?? false }));
-            }
-          });
-        }
-      }
+    if (data.type === 'get_tab_info') {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      respond({ type: 'tab_info', tabId: tab.id, url: tab.url, requestId: rid });
+
     } else if (data.type === 'screenshot_request') {
-      captureScreenshot().then((base64) => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'screenshot_response', data: base64 }));
+      try {
+        const base64 = await captureTabScreenshot(data.tabId);
+        respond({ type: 'screenshot_response', data: base64, requestId: rid });
+      } catch (e) {
+        console.error('[Vroom] Screenshot error:', e);
+        respond({ type: 'screenshot_response', data: '', requestId: rid });
+      }
+
+    } else if (data.type === 'action') {
+      try {
+        if (data.action === 'click') {
+          await performTrustedClick(data.tabId, data.x, data.y);
+        } else {
+          await new Promise((resolve) => {
+            chrome.tabs.sendMessage(data.tabId, data, resolve);
+          });
         }
-      });
+        respond({ type: 'action_result', success: true, requestId: rid });
+      } catch (e) {
+        console.error('[Vroom] Action error:', e);
+        respond({ type: 'action_result', success: false, requestId: rid });
+      }
+
+    } else if (data.type === 'open_tabs') {
+      const tabIds = [];
+      for (let i = 0; i < data.count; i++) {
+        const tab = await chrome.tabs.create({ url: data.url, active: false });
+        tabIds.push(tab.id);
+      }
+      await Promise.all(tabIds.map((id) => waitForTabLoad(id)));
+      respond({ type: 'tabs_opened', tabIds, requestId: rid });
+
+    } else if (data.type === 'close_tabs') {
+      if (data.tabIds && data.tabIds.length > 0) {
+        await chrome.tabs.remove(data.tabIds);
+      }
+
     } else if (data.type === 'status' || data.type === 'complete') {
       if (sidepanelPort) sidepanelPort.postMessage(data);
     }
@@ -123,41 +91,48 @@ function connectWebSocket() {
   };
 }
 
+function respond(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(msg));
+  }
+}
+
+async function captureTabScreenshot(tabId) {
+  await chrome.debugger.attach({ tabId }, '1.3');
+  const result = await chrome.debugger.sendCommand(
+    { tabId },
+    'Page.captureScreenshot',
+    { format: 'jpeg', quality: 70 }
+  );
+  await chrome.debugger.detach({ tabId });
+  return result.data;
+}
+
 async function performTrustedClick(tabId, x, y) {
-  // Attach debugger, send trusted mouse events via CDP, then detach
   await chrome.debugger.attach({ tabId }, '1.3');
   const params = { type: 'mousePressed', x, y, button: 'left', clickCount: 1 };
   await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', params);
   await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { ...params, type: 'mouseReleased' });
   await chrome.debugger.detach({ tabId });
-  console.log(`[Vroom] Trusted click at (${x}, ${y})`);
+  console.log(`[Vroom] Trusted click at (${x}, ${y}) on tab ${tabId}`);
 }
 
-async function captureScreenshot() {
-  // Always capture from the target window, not whatever is focused
-  const dataUrl = await chrome.tabs.captureVisibleTab(targetWindowId, { format: 'jpeg', quality: 70 });
-  return dataUrl.split(',')[1];
-}
-
-function startFrameCapture() {
-  stopFrameCapture();
-  frameInterval = setInterval(async () => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      try {
-        const base64 = await captureScreenshot();
-        ws.send(JSON.stringify({ type: 'frame', data: base64 }));
-      } catch (e) {
-        // Tab might not be capturable
+function waitForTabLoad(tabId) {
+  return new Promise((resolve) => {
+    function listener(updatedTabId, changeInfo) {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
       }
     }
-  }, 1000);
-}
-
-function stopFrameCapture() {
-  if (frameInterval) {
-    clearInterval(frameInterval);
-    frameInterval = null;
-  }
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.get(tabId, (tab) => {
+      if (tab.status === 'complete') {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    });
+  });
 }
 
 chrome.action.onClicked.addListener((tab) => {

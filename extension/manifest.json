@@ -3,7 +3,7 @@
   "name": "Vroom",
   "version": "0.1.0",
   "description": "Virtual Room - AI Browser Agent",
-  "permissions": ["sidePanel", "tabs", "activeTab", "offscreen", "debugger"],
+  "permissions": ["sidePanel", "tabs", "activeTab", "debugger"],
   "host_permissions": ["<all_urls>"],
   "side_panel": {
     "default_path": "sidepanel.html"
