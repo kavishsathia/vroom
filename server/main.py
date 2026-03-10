@@ -64,6 +64,13 @@ class VroomServer:
         })
         return result["data"]
 
+    async def get_viewport_size(self, tab_id):
+        result = await self._request({
+            "type": "get_viewport_size",
+            "tabId": tab_id,
+        })
+        return result["width"], result["height"]
+
     async def send_action(self, tab_id, action_data):
         result = await self._request({
             "type": "action",

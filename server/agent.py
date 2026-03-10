@@ -20,12 +20,14 @@ Analyze the screenshot and respond with a single JSON action:
 
 Rules:
 - The tab starts on a blank page — use navigate to go to the right URL first
-- For click, return a bounding box around the target element using normalized coordinates (0-1000 range)
-- Format is [y_min, x_min, y_max, x_max] where top-left is origin
+- For click, return a bounding box with exactly 4 values using normalized coordinates (0-1000 range)
+- Format is [y_min, x_min, y_max, x_max] where top-left is origin — always provide all 4 values
 - Refer to elements by their position on the page (e.g. "first result", "search box"), NOT by guessing their text content
 - Perform ONE action at a time
 - After each action you'll see an updated screenshot
 - Think about the overall task — decide what the next step should be
+- If you are stuck and cannot make progress, respond with done and an error summary
+- If you have confidently completed the task, respond with done immediately — do not keep going
 - Respond with ONLY valid JSON
 """
 
@@ -36,7 +38,7 @@ class Agent:
         self.tab_id = tab_id
         self.client = genai.Client()
 
-    async def run(self, task, max_steps=15):
+    async def run(self, task, max_steps=100):
         history = []
 
         await self.server.send_status(f"[Tab {self.tab_id}] Starting: {task}")
@@ -45,7 +47,13 @@ class Agent:
             print(f"[agent:{self.tab_id}] Step {step + 1}/{max_steps} for: {task}")
             screenshot_b64 = await self.server.request_screenshot(self.tab_id)
             raw_bytes = base64.b64decode(screenshot_b64)
-            screenshot_bytes, vw, vh = self._downscale(raw_bytes)
+            img = Image.open(io.BytesIO(raw_bytes))
+            vw = img.width // 2
+            vh = img.height // 2
+            img = img.resize((vw, vh), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=70)
+            screenshot_bytes = buf.getvalue()
 
             text = (
                 f"Task: {task}\n\nThis is the current page. What is the next action?"
@@ -101,7 +109,7 @@ class Agent:
                 f"[Tab {self.tab_id}] Step {step + 1}: {action['action']} {label}"
             )
 
-            if action["action"] == "click" and "box_2d" in action:
+            if action["action"] == "click" and "box_2d" in action and len(action["box_2d"]) == 4:
                 box = action["box_2d"]
                 x = int(((box[1] + box[3]) / 2) / 1000 * vw)
                 y = int(((box[0] + box[2]) / 2) / 1000 * vh)
@@ -130,15 +138,6 @@ class Agent:
 
         await self.server.send_status(f"[Tab {self.tab_id}] Max steps reached")
         return "Max steps reached"
-
-    def _downscale(self, screenshot_bytes):
-        img = Image.open(io.BytesIO(screenshot_bytes))
-        new_w = img.width // 2
-        new_h = img.height // 2
-        img = img.resize((new_w, new_h), Image.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=70)
-        return buf.getvalue(), new_w, new_h
 
     def _save_debug_screenshot(self, screenshot_bytes, x, y, step):
         try:

@@ -2,6 +2,7 @@ let ws = null;
 let sidepanelPort = null;
 let dashboardPort = null;
 const executorTabs = {}; // tabId -> task string
+const debuggerTabs = new Set(); // tabs with debugger attached
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name === 'sidepanel') {
@@ -43,6 +44,31 @@ chrome.runtime.onConnect.addListener((port) => {
   }
 });
 
+async function ensureDebugger(tabId) {
+  if (!debuggerTabs.has(tabId)) {
+    await chrome.debugger.attach({ tabId }, '1.3');
+    debuggerTabs.add(tabId);
+    console.log(`[Vroom] Debugger attached to tab ${tabId}`);
+  }
+}
+
+async function detachDebugger(tabId) {
+  if (debuggerTabs.has(tabId)) {
+    try {
+      await chrome.debugger.detach({ tabId });
+    } catch (e) {
+      // Tab may already be closed
+    }
+    debuggerTabs.delete(tabId);
+    console.log(`[Vroom] Debugger detached from tab ${tabId}`);
+  }
+}
+
+// Clean up if a tab with debugger is closed externally
+chrome.tabs.onRemoved.addListener((tabId) => {
+  debuggerTabs.delete(tabId);
+});
+
 function connectWebSocket() {
   if (ws && ws.readyState === WebSocket.OPEN) return;
 
@@ -64,15 +90,20 @@ function connectWebSocket() {
 
     } else if (data.type === 'screenshot_request') {
       try {
-        const base64 = await captureTabScreenshot(data.tabId);
-        respond({ type: 'screenshot_response', data: base64, requestId: rid });
+        await ensureDebugger(data.tabId);
+        const result = await chrome.debugger.sendCommand(
+          { tabId: data.tabId },
+          'Page.captureScreenshot',
+          { format: 'jpeg', quality: 70 }
+        );
+        respond({ type: 'screenshot_response', data: result.data, requestId: rid });
 
         // Forward to dashboard for live view
         if (dashboardPort && data.tabId in executorTabs) {
           dashboardPort.postMessage({
             type: 'tab_screenshot',
             tabId: data.tabId,
-            data: base64,
+            data: result.data,
           });
         }
       } catch (e) {
@@ -83,7 +114,26 @@ function connectWebSocket() {
     } else if (data.type === 'action') {
       try {
         if (data.action === 'click') {
-          await performTrustedClick(data.tabId, data.x, data.y);
+          await ensureDebugger(data.tabId);
+          const params = { type: 'mousePressed', x: data.x, y: data.y, button: 'left', clickCount: 1 };
+          await chrome.debugger.sendCommand({ tabId: data.tabId }, 'Input.dispatchMouseEvent', params);
+          await chrome.debugger.sendCommand({ tabId: data.tabId }, 'Input.dispatchMouseEvent', { ...params, type: 'mouseReleased' });
+          console.log(`[Vroom] Trusted click at (${data.x}, ${data.y}) on tab ${data.tabId}`);
+        } else if (data.action === 'type') {
+          await ensureDebugger(data.tabId);
+          for (const char of data.text) {
+            await chrome.debugger.sendCommand({ tabId: data.tabId }, 'Input.dispatchKeyEvent', {
+              type: 'keyDown',
+              text: char,
+              key: char,
+              unmodifiedText: char,
+            });
+            await chrome.debugger.sendCommand({ tabId: data.tabId }, 'Input.dispatchKeyEvent', {
+              type: 'keyUp',
+              key: char,
+            });
+          }
+          console.log(`[Vroom] Trusted type "${data.text}" on tab ${data.tabId}`);
         } else if (data.action === 'navigate') {
           await chrome.tabs.update(data.tabId, { url: data.url });
           await waitForTabLoad(data.tabId);
@@ -106,6 +156,11 @@ function connectWebSocket() {
       }
       await Promise.all(tabIds.map((id) => waitForTabLoad(id)));
 
+      // Attach debugger early so the banner is stable before first screenshot
+      for (const id of tabIds) {
+        await ensureDebugger(id);
+      }
+
       // Track executor tabs with their task
       for (const id of tabIds) {
         executorTabs[id] = data.task || '';
@@ -127,6 +182,7 @@ function connectWebSocket() {
     } else if (data.type === 'close_tabs') {
       if (data.tabIds && data.tabIds.length > 0) {
         for (const id of data.tabIds) {
+          await detachDebugger(id);
           delete executorTabs[id];
           if (dashboardPort) {
             dashboardPort.postMessage({ type: 'tab_closed', tabId: id });
@@ -159,26 +215,6 @@ function respond(msg) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
   }
-}
-
-async function captureTabScreenshot(tabId) {
-  await chrome.debugger.attach({ tabId }, '1.3');
-  const result = await chrome.debugger.sendCommand(
-    { tabId },
-    'Page.captureScreenshot',
-    { format: 'jpeg', quality: 70 }
-  );
-  await chrome.debugger.detach({ tabId });
-  return result.data;
-}
-
-async function performTrustedClick(tabId, x, y) {
-  await chrome.debugger.attach({ tabId }, '1.3');
-  const params = { type: 'mousePressed', x, y, button: 'left', clickCount: 1 };
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', params);
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { ...params, type: 'mouseReleased' });
-  await chrome.debugger.detach({ tabId });
-  console.log(`[Vroom] Trusted click at (${x}, ${y}) on tab ${tabId}`);
 }
 
 function waitForTabLoad(tabId) {
