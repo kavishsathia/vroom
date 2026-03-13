@@ -170,18 +170,66 @@ function applyTheme() {
 applyTheme();
 
 // --- Task history (terminal-style up/down arrow) ---
-const taskHistoryList = JSON.parse(localStorage.getItem('vroomTaskHistory') || '[]');
+const taskHistoryList = JSON.parse(localStorage.getItem('vroomTaskHistory') || '[]').map(entry => {
+  if (typeof entry === 'string') return { text: entry, status: 'success', timestamp: Date.now() };
+  // Mark stale running tasks as failed (older than 1 hour)
+  if (entry.status === 'running' && Date.now() - entry.timestamp > 3600000) entry.status = 'failed';
+  return entry;
+});
+localStorage.setItem('vroomTaskHistory', JSON.stringify(taskHistoryList));
 let historyIndex = -1;
 let savedDraft = '';
 
 function addToTaskHistory(text) {
-  const idx = taskHistoryList.indexOf(text);
+  const idx = taskHistoryList.findIndex(e => e.text === text);
   if (idx !== -1) taskHistoryList.splice(idx, 1);
-  taskHistoryList.unshift(text);
+  taskHistoryList.unshift({ text, status: 'running', timestamp: Date.now() });
   if (taskHistoryList.length > 50) taskHistoryList.pop();
   localStorage.setItem('vroomTaskHistory', JSON.stringify(taskHistoryList));
   historyIndex = -1;
   savedDraft = '';
+}
+
+function updateTaskHistoryStatus(text, status) {
+  const entry = taskHistoryList.find(e => e.text === text && e.status === 'running');
+  if (entry) {
+    entry.status = status;
+    localStorage.setItem('vroomTaskHistory', JSON.stringify(taskHistoryList));
+  }
+}
+
+// --- Frequently visited sites ---
+const frequentSites = JSON.parse(localStorage.getItem('vroomFrequentSites') || '{}');
+
+function trackSiteVisit(url, favicon, title) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return;
+    const hostname = parsed.hostname;
+    if (!hostname) return;
+    const entry = frequentSites[hostname] || { count: 0, favicon: '', title: '' };
+    entry.count++;
+    if (favicon) entry.favicon = favicon;
+    if (title) entry.title = title;
+    frequentSites[hostname] = entry;
+    // Cap at 100 entries
+    const keys = Object.keys(frequentSites);
+    if (keys.length > 100) {
+      const sorted = keys.sort((a, b) => frequentSites[a].count - frequentSites[b].count);
+      delete frequentSites[sorted[0]];
+    }
+    localStorage.setItem('vroomFrequentSites', JSON.stringify(frequentSites));
+  } catch (_) {}
+}
+
+function updateSiteFavicon(url, favicon) {
+  try {
+    const hostname = new URL(url).hostname;
+    if (frequentSites[hostname]) {
+      frequentSites[hostname].favicon = favicon;
+      localStorage.setItem('vroomFrequentSites', JSON.stringify(frequentSites));
+    }
+  } catch (_) {}
 }
 
 const tabs = {};
@@ -190,6 +238,7 @@ let nextAgentId = null;
 let activeTabId = null;
 let nextUserTabId = -1; // negative IDs for user tabs
 let currentTaskGroup = null; // { el, tabsContainer, dot, tabIds }
+let currentTaskText = ''; // track for history status updates
 const taskGroups = []; // all task groups for cleanup
 
 document.getElementById('newTabBtn').addEventListener('click', () => {
@@ -239,6 +288,7 @@ runBtn.addEventListener('click', async () => {
 
   window.vroom.sendTask(text, tabInfo);
   runBtn.disabled = true;
+  currentTaskText = text;
   log('Task: ' + text + (attachedTabIds.length > 0 ? ` [with tabs: ${attachedTabIds.join(', ')}]` : ''));
   addToTaskHistory(text);
   createTaskGroup(text);
@@ -257,14 +307,14 @@ taskInput.addEventListener('keydown', (e) => {
     if (historyIndex === -1) savedDraft = taskInput.value;
     if (historyIndex < taskHistoryList.length - 1) {
       historyIndex++;
-      taskInput.value = taskHistoryList[historyIndex];
+      taskInput.value = taskHistoryList[historyIndex].text;
       taskInput.style.height = 'auto';
       taskInput.style.height = Math.min(taskInput.scrollHeight, 160) + 'px';
     }
   } else if (e.key === 'ArrowDown' && historyIndex >= 0) {
     e.preventDefault();
     historyIndex--;
-    taskInput.value = historyIndex >= 0 ? taskHistoryList[historyIndex] : savedDraft;
+    taskInput.value = historyIndex >= 0 ? taskHistoryList[historyIndex].text : savedDraft;
     taskInput.style.height = 'auto';
     taskInput.style.height = Math.min(taskInput.scrollHeight, 160) + 'px';
   }
@@ -367,7 +417,7 @@ window.vroom.onMessage((msg) => {
           }
           // Check if grid is now empty of cards
           if (!grid.querySelector('.tab-card')) {
-            emptyState.style.display = '';
+            showHomePage();
           }
         }
       }
@@ -379,14 +429,22 @@ window.vroom.onMessage((msg) => {
     statusText.textContent = 'Complete';
     runBtn.disabled = false;
     log('Complete: ' + msg.summary, true);
+    if (currentTaskText) {
+      updateTaskHistoryStatus(currentTaskText, 'success');
+      currentTaskText = '';
+    }
     if (currentTaskGroup) {
       currentTaskGroup.el.classList.add('complete');
       currentTaskGroup = null;
     }
+    // Show home page if no active grid cards
+    if (!grid.querySelector('.tab-card')) {
+      showHomePage();
+    }
 
   } else if (msg.type === 'tab_screenshot') {
     const tabId = msg.tabId;
-    if (tabs[tabId]) {
+    if (tabs[tabId] && tabs[tabId].img) {
       tabs[tabId].img.src = 'data:image/jpeg;base64,' + msg.data;
     }
 
@@ -410,12 +468,14 @@ window.vroom.onMessage((msg) => {
           updateUrlBar();
           updateNavButtons();
         }
+        try { trackSiteVisit(webview.getURL(), '', ''); } catch (_) {}
       });
 
       webview.addEventListener('page-favicon-updated', (e) => {
         if (e.favicons && e.favicons.length > 0 && tabs[tabId] && tabs[tabId].sidebarFavicon) {
           tabs[tabId].sidebarFavicon.src = e.favicons[0];
           tabs[tabId].sidebarFavicon.classList.add('visible');
+          try { updateSiteFavicon(webview.getURL(), e.favicons[0]); } catch (_) {}
         }
       });
 
@@ -758,11 +818,11 @@ function removeTabCard(tabId) {
 
   const hasAgentTabs = Object.keys(tabs).some(id => parseInt(id) > 0);
   if (!hasAgentTabs) {
-    emptyState.style.display = '';
+    showHomePage();
   }
 }
 
-function createUserTab() {
+function createUserTab(url = 'https://www.google.com') {
   const tabId = nextUserTabId--;
 
   const sidebarTab = document.createElement('button');
@@ -814,7 +874,7 @@ function createUserTab() {
   tabList.appendChild(sidebarTab);
 
   const webview = document.createElement('webview');
-  webview.src = 'https://www.google.com';
+  webview.src = url;
   webviewLayer.appendChild(webview);
 
   // Register with the server so it can screenshot/control this tab (once only)
@@ -833,6 +893,7 @@ function createUserTab() {
     if (e.favicons && e.favicons.length > 0) {
       sidebarFavicon.src = e.favicons[0];
       sidebarFavicon.classList.add('visible');
+      try { updateSiteFavicon(webview.getURL(), e.favicons[0]); } catch (_) {}
     }
   });
 
@@ -841,6 +902,9 @@ function createUserTab() {
       updateUrlBar();
       updateNavButtons();
     }
+    try {
+      trackSiteVisit(webview.getURL(), sidebarFavicon.src || '', sidebarTitle.textContent || '');
+    } catch (_) {}
   });
 
   tabs[tabId] = {
@@ -888,3 +952,187 @@ function log(text, highlight = false) {
   logEntries.appendChild(entry);
   logEntries.scrollTop = logEntries.scrollHeight;
 }
+
+// --- Home page ---
+function relativeTime(ts) {
+  const diff = Date.now() - ts;
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+  if (diff < 604800000) return Math.floor(diff / 86400000) + 'd ago';
+  return new Date(ts).toLocaleDateString();
+}
+
+function showHomePage() {
+  emptyState.style.display = '';
+  renderHomePage();
+}
+
+function renderHomePage() {
+  emptyState.innerHTML = '';
+
+  const page = document.createElement('div');
+  page.className = 'home-page';
+
+  // Center: logo + prompt
+  const center = document.createElement('div');
+  center.className = 'home-center';
+
+  const logo = document.createElement('img');
+  logo.className = 'home-logo';
+  logo.src = 'logo.png';
+
+  const promptRow = document.createElement('div');
+  promptRow.className = 'home-prompt-row';
+
+  const promptInput = document.createElement('input');
+  promptInput.className = 'home-prompt-input';
+  promptInput.type = 'text';
+  promptInput.placeholder = 'describe a task...';
+
+  const homeRunBtn = document.createElement('button');
+  homeRunBtn.className = 'home-run-btn';
+  homeRunBtn.textContent = 'Run';
+
+  homeRunBtn.addEventListener('click', () => {
+    const text = promptInput.value.trim();
+    if (!text) return;
+    taskInput.value = text;
+    runBtn.click();
+    promptInput.value = '';
+  });
+
+  promptInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      homeRunBtn.click();
+    }
+  });
+
+  promptRow.appendChild(promptInput);
+  promptRow.appendChild(homeRunBtn);
+  center.appendChild(logo);
+  center.appendChild(promptRow);
+  page.appendChild(center);
+
+  // Columns
+  const columns = document.createElement('div');
+  columns.className = 'home-columns';
+
+  // Recent Tasks column
+  const recentCol = document.createElement('div');
+  recentCol.className = 'home-col';
+
+  const recentTitle = document.createElement('div');
+  recentTitle.className = 'home-col-title';
+  recentTitle.textContent = 'Recent Tasks';
+  recentCol.appendChild(recentTitle);
+
+  const taskList = document.createElement('div');
+  taskList.className = 'home-task-list';
+
+  const recentTasks = taskHistoryList.slice(0, 10);
+  for (const task of recentTasks) {
+    const card = document.createElement('div');
+    card.className = 'home-task-card';
+
+    const text = document.createElement('div');
+    text.className = 'home-task-text';
+    text.textContent = task.text;
+
+    const meta = document.createElement('div');
+    meta.className = 'home-task-meta';
+
+    const dot = document.createElement('div');
+    dot.className = 'home-task-dot ' + task.status;
+
+    const statusLabel = document.createElement('span');
+    statusLabel.className = 'home-task-status';
+    statusLabel.textContent = task.status === 'success' ? 'Succeeded' : task.status === 'failed' ? 'Failed' : 'Running';
+
+    const time = document.createElement('span');
+    time.className = 'home-task-time';
+    time.textContent = relativeTime(task.timestamp);
+
+    meta.appendChild(dot);
+    meta.appendChild(statusLabel);
+    meta.appendChild(time);
+    card.appendChild(text);
+    card.appendChild(meta);
+    taskList.appendChild(card);
+  }
+
+  if (recentTasks.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'home-task-status';
+    empty.textContent = 'No tasks yet';
+    empty.style.padding = '8px 0';
+    taskList.appendChild(empty);
+  }
+
+  const recentScroll = document.createElement('div');
+  recentScroll.className = 'home-col-scroll';
+  recentScroll.appendChild(taskList);
+  recentCol.appendChild(recentScroll);
+  columns.appendChild(recentCol);
+
+  // Frequently Visited column
+  const sitesCol = document.createElement('div');
+  sitesCol.className = 'home-col';
+
+  const sitesTitle = document.createElement('div');
+  sitesTitle.className = 'home-col-title';
+  sitesTitle.textContent = 'Frequently Visited';
+  sitesCol.appendChild(sitesTitle);
+
+  const sitesGrid = document.createElement('div');
+  sitesGrid.className = 'home-sites-grid';
+
+  const sortedSites = Object.entries(frequentSites)
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 12);
+
+  for (const [hostname, site] of sortedSites) {
+    const tile = document.createElement('div');
+    tile.className = 'home-site-tile';
+    tile.title = site.title || hostname;
+
+    const favicon = document.createElement('img');
+    favicon.className = 'home-site-favicon';
+    favicon.src = site.favicon || `https://${hostname}/favicon.ico`;
+    favicon.onerror = () => { favicon.style.display = 'none'; };
+
+    const label = document.createElement('div');
+    label.className = 'home-site-label';
+    label.textContent = hostname;
+
+    tile.appendChild(favicon);
+    tile.appendChild(label);
+
+    tile.addEventListener('click', () => {
+      createUserTab('https://' + hostname);
+    });
+
+    sitesGrid.appendChild(tile);
+  }
+
+  if (sortedSites.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'home-task-status';
+    empty.textContent = 'No sites yet';
+    empty.style.padding = '8px 0';
+    sitesGrid.appendChild(empty);
+  }
+
+  const sitesScroll = document.createElement('div');
+  sitesScroll.className = 'home-col-scroll';
+  sitesScroll.appendChild(sitesGrid);
+  sitesCol.appendChild(sitesScroll);
+  columns.appendChild(sitesCol);
+  page.appendChild(columns);
+
+  emptyState.appendChild(page);
+}
+
+// Render home page on startup
+renderHomePage();
