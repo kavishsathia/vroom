@@ -318,8 +318,6 @@ class Extractor:
                 self._results[executor_id] = result
             except Exception as e:
                 self._results[executor_id] = f"Error: {e}"
-            finally:
-                await self.server.close_tabs([tab_id])
 
         self._running[executor_id] = asyncio.create_task(_run_executor())
         print(f"[extractor] Spawned {executor_id}: {subtask}")
