@@ -3,7 +3,6 @@ const path = require('path');
 const WebSocket = require('ws');
 
 app.name = 'Vroom';
-app.disableHardwareAcceleration();
 
 let win = null;
 let ws = null;

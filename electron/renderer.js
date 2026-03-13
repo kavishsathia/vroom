@@ -319,7 +319,7 @@ window.vroom.onMessage((msg) => {
       nextAgentId = spawnMatch[1];
     }
 
-    // Handle spawn on existing tab — move it into the current task group
+    // Handle spawn on existing tab — move it into the current task group and create a grid card
     const spawnOnTabMatch = msg.message.match(/Spawned executor (exec_\d+) on tab (-?\d+): (.+)/);
     if (spawnOnTabMatch) {
       const executorId = spawnOnTabMatch[1];
@@ -331,6 +331,11 @@ window.vroom.onMessage((msg) => {
         currentTaskGroup.tabIds.push(existingTabId);
         // Map executor to tab for speech
         agentTabs[executorId] = existingTabId;
+
+        // Create a grid card if this tab doesn't have one (user tabs)
+        if (!tabs[existingTabId].card) {
+          createGridCard(existingTabId, spawnOnTabMatch[3]);
+        }
       }
     }
 
@@ -639,6 +644,93 @@ function createTabCard(tabId, task) {
     sidebarTab, sidebarDot, sidebarStep, sidebarBadge, sidebarFavicon,
     webview: null,
   };
+}
+
+function createGridCard(tabId, task) {
+  emptyState.style.display = 'none';
+
+  const card = document.createElement('div');
+  card.className = 'tab-card active';
+
+  const header = document.createElement('div');
+  header.className = 'card-header';
+
+  const label = document.createElement('div');
+  label.className = 'tab-label';
+  label.textContent = task;
+  label.title = task;
+
+  const statusEl = document.createElement('div');
+  statusEl.className = 'tab-status';
+  statusEl.textContent = 'Running';
+
+  const speechIndicator = document.createElement('div');
+  speechIndicator.className = 'speech-indicator';
+
+  header.appendChild(label);
+  header.appendChild(speechIndicator);
+  header.appendChild(statusEl);
+
+  const screenshotContainer = document.createElement('div');
+  screenshotContainer.className = 'screenshot-container';
+
+  const img = document.createElement('img');
+  img.style.display = 'none';
+
+  const placeholder = document.createElement('div');
+  placeholder.className = 'placeholder';
+  placeholder.textContent = 'Waiting for stream...';
+
+  img.addEventListener('load', () => {
+    img.style.display = 'block';
+    placeholder.style.display = 'none';
+  });
+
+  screenshotContainer.appendChild(img);
+  screenshotContainer.appendChild(placeholder);
+
+  const stepInfo = document.createElement('div');
+  stepInfo.className = 'step-info';
+  stepInfo.textContent = 'Starting...';
+
+  card.appendChild(header);
+  card.appendChild(screenshotContainer);
+  card.appendChild(stepInfo);
+
+  grid.appendChild(card);
+
+  // Attach grid card elements to the existing tab entry
+  const entry = tabs[tabId];
+  entry.card = card;
+  entry.img = img;
+  entry.label = label;
+  entry.statusEl = statusEl;
+  entry.stepInfo = stepInfo;
+  entry.speechIndicator = speechIndicator;
+
+  // Add sidebar step + badge if missing (user tabs don't have these)
+  if (!entry.sidebarStep) {
+    const sidebarStep = document.createElement('span');
+    sidebarStep.className = 'tab-step';
+    sidebarStep.textContent = 'Starting...';
+    const tabInfo = entry.sidebarTab.querySelector('.tab-info');
+    if (tabInfo) tabInfo.appendChild(sidebarStep);
+    entry.sidebarStep = sidebarStep;
+  }
+  if (!entry.sidebarBadge) {
+    const sidebarBadge = document.createElement('span');
+    sidebarBadge.className = 'tab-badge';
+    sidebarBadge.textContent = 'Running';
+    const closeBtn = entry.sidebarTab.querySelector('.tab-close');
+    entry.sidebarTab.insertBefore(sidebarBadge, closeBtn);
+    entry.sidebarBadge = sidebarBadge;
+  }
+
+  // Update sidebar dot to running
+  if (entry.sidebarDot) {
+    entry.sidebarDot.className = 'tab-dot running';
+    entry.sidebarDot.style.background = '';
+  }
 }
 
 function removeTabCard(tabId) {
