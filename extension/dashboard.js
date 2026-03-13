@@ -8,11 +8,14 @@ const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const logEntries = document.getElementById('logEntries');
 
-const tabs = {}; // tabId -> { card, img, label, status, stepInfo }
+const tabs = {}; // tabId -> { card, img, label, status, stepInfo, speechIndicator }
+const agentTabs = {}; // agentId -> tabId
+let nextAgentId = null; // temp: agent id from spawn message, matched to next tab_opened
 
 runBtn.addEventListener('click', () => {
   const text = taskInput.value.trim();
   if (!text) return;
+  if (audioCtx.state === 'suspended') audioCtx.resume();
   port.postMessage({ type: 'task', text });
   runBtn.disabled = true;
   log('Task: ' + text);
@@ -29,10 +32,10 @@ port.onMessage.addListener((msg) => {
   if (msg.type === 'status') {
     statusText.textContent = msg.message;
 
-    // Parse executor spawn messages to create cards
+    // Capture agent id from spawn messages to link with next tab_opened
     const spawnMatch = msg.message.match(/Spawned executor (exec_\d+): (.+)/);
     if (spawnMatch) {
-      // Card will be created when we get tab_opened with executor info
+      nextAgentId = spawnMatch[1];
     }
 
     // Parse tab-specific status
@@ -65,9 +68,31 @@ port.onMessage.addListener((msg) => {
 
   } else if (msg.type === 'tab_opened') {
     createTabCard(msg.tabId, msg.task || `Tab ${msg.tabId}`);
+    if (nextAgentId) {
+      agentTabs[nextAgentId] = msg.tabId;
+      nextAgentId = null;
+    }
 
   } else if (msg.type === 'tab_closed') {
     removeTabCard(msg.tabId);
+
+  } else if (msg.type === 'speech_state') {
+    const tabId = agentTabs[msg.agentId];
+    if (tabId && tabs[tabId] && tabs[tabId].speechIndicator) {
+      const el = tabs[tabId].speechIndicator;
+      el.className = 'speech-indicator';
+      if (msg.state === 'queued') {
+        el.classList.add('queued');
+        el.textContent = 'Wants to speak';
+      } else if (msg.state === 'spotlight') {
+        el.classList.add('spotlight');
+        el.textContent = 'Speaking';
+      }
+      // idle: resets to hidden (no extra class)
+    }
+
+  } else if (msg.type === 'audio') {
+    playAudio(msg.data, msg.agentId);
 
   } else if (msg.type === 'connected') {
     statusDot.classList.add('connected');
@@ -94,7 +119,11 @@ function createTabCard(tabId, task) {
   statusEl.className = 'tab-status';
   statusEl.textContent = 'Running';
 
+  const speechIndicator = document.createElement('div');
+  speechIndicator.className = 'speech-indicator';
+
   header.appendChild(label);
+  header.appendChild(speechIndicator);
   header.appendChild(statusEl);
 
   const screenshotContainer = document.createElement('div');
@@ -125,7 +154,7 @@ function createTabCard(tabId, task) {
 
   grid.appendChild(card);
 
-  tabs[tabId] = { card, img, label, statusEl, stepInfo };
+  tabs[tabId] = { card, img, label, statusEl, stepInfo, speechIndicator };
 }
 
 function removeTabCard(tabId) {
@@ -135,6 +164,33 @@ function removeTabCard(tabId) {
   if (Object.keys(tabs).length === 0) {
     emptyState.style.display = '';
   }
+}
+
+const audioCtx = new AudioContext();
+
+async function playAudio(b64Data, agentId) {
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+  const raw = atob(b64Data);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+
+  // PCM 16-bit mono 24kHz -> Float32
+  const samples = new Float32Array(bytes.length / 2);
+  const view = new DataView(bytes.buffer);
+  for (let i = 0; i < samples.length; i++) {
+    samples[i] = view.getInt16(i * 2, true) / 32768;
+  }
+
+  const buffer = audioCtx.createBuffer(1, samples.length, 24000);
+  buffer.getChannelData(0).set(samples);
+
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(audioCtx.destination);
+  source.start();
+
+  log(`[${agentId}] Speaking...`);
 }
 
 function log(text, highlight = false) {

@@ -191,6 +191,9 @@ function connectWebSocket() {
         await chrome.tabs.remove(data.tabIds);
       }
 
+    } else if (data.type === 'audio' || data.type === 'speech_state') {
+      broadcast(data);
+
     } else if (data.type === 'status' || data.type === 'complete') {
       broadcast(data);
     }

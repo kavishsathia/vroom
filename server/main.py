@@ -3,6 +3,7 @@ import json
 from dotenv import load_dotenv
 import websockets
 from extractor import Extractor
+from multiplexer import Multiplexer
 
 load_dotenv()
 
@@ -12,6 +13,33 @@ class VroomServer:
         self.ws = None
         self._pending = {}  # requestId -> future
         self._request_counter = 0
+        self.multiplexer = Multiplexer(
+            on_message=self._on_agent_message,
+            on_audio=self._on_agent_audio,
+            on_state_change=self._on_agent_state_change,
+        )
+
+    def _on_agent_message(self, agent_id, message):
+        """Called when an agent speaks through the multiplexer."""
+        print(f"[mux] {agent_id}: {message}")
+        asyncio.ensure_future(self.send_status(f"[{agent_id}] {message}"))
+
+    async def _on_agent_state_change(self, agent_id, state):
+        """Called when an agent's speech state changes (queued/spotlight/idle)."""
+        await self.ws.send(json.dumps({
+            "type": "speech_state",
+            "agentId": agent_id,
+            "state": state,
+        }))
+
+    async def _on_agent_audio(self, agent_id, audio_b64, duration):
+        """Called when TTS audio is ready — send to frontend for playback."""
+        await self.ws.send(json.dumps({
+            "type": "audio",
+            "agentId": agent_id,
+            "data": audio_b64,
+            "duration": duration,
+        }))
 
     def _next_id(self):
         self._request_counter += 1
@@ -44,10 +72,11 @@ class VroomServer:
 
         except websockets.exceptions.ConnectionClosed:
             print("[vroom] Extension disconnected")
+            self.multiplexer.stop()
 
     async def _run_task(self, text):
         try:
-            extractor = Extractor(self)
+            extractor = Extractor(self, multiplexer=self.multiplexer)
             await extractor.run(text)
 
         except Exception as e:
@@ -63,13 +92,6 @@ class VroomServer:
             "tabId": tab_id,
         })
         return result["data"]
-
-    async def get_viewport_size(self, tab_id):
-        result = await self._request({
-            "type": "get_viewport_size",
-            "tabId": tab_id,
-        })
-        return result["width"], result["height"]
 
     async def send_action(self, tab_id, action_data):
         result = await self._request({

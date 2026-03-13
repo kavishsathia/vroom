@@ -30,6 +30,9 @@ Rules:
 - Pay attention to temporal dependencies — if the user says "after X, do Y" or \
   "wait for X then do Y", spawn X first, call wait_for_results, THEN spawn Y
 - Only parallelize subtasks that are truly independent
+- Executors can speak to the user. If the user wants something spoken or communicated, \
+  include that in the executor's task description (e.g. "then say hello to the user"). \
+  Pass speech instructions through faithfully — do not strip them out.
 """
 
 TOOLS = [
@@ -102,9 +105,10 @@ TOOLS = [
 
 
 class Extractor:
-    def __init__(self, server):
+    def __init__(self, server, multiplexer=None):
         self.server = server
         self.client = genai.Client()
+        self.multiplexer = multiplexer
         self._executor_counter = 0
         self._running = {}  # executor_id -> asyncio.Task
         self._results = {}  # executor_id -> summary string
@@ -244,7 +248,7 @@ class Extractor:
             tab_ids = await self.server.open_tabs(1, "about:blank", subtask)
             tab_id = tab_ids[0]
             try:
-                agent = Agent(self.server, tab_id)
+                agent = Agent(self.server, tab_id, multiplexer=self.multiplexer, agent_id=executor_id)
                 result = await agent.run(subtask)
                 self._results[executor_id] = result
             except Exception as e:

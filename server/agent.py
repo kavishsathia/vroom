@@ -16,7 +16,21 @@ Analyze the screenshot and respond with a single JSON action:
 - {"action": "type", "text": "<string>"} — type text into the currently focused element
 - {"action": "navigate", "url": "<url>"} — navigate to a specific URL
 - {"action": "scroll", "direction": "up|down"} — scroll the page
+- {"action": "speak", "message": "<string>"} — say something to the user. Keep it to 1 sentence.
 - {"action": "done", "summary": "<string>"} — task is complete
+
+Speech system:
+You are one of multiple agents running in parallel. You all share a single audio channel to \
+speak to the user. Only one agent can speak at a time — just like humans in a conversation.
+
+When you want to say something, use {"action": "speak", "message": "..."}. \
+If another agent is already speaking, your message won't go through — you'll be told it was \
+rejected. Just try again later. Continue doing your browser task in the meantime.
+
+Rules:
+- When you see "unread_messages", these are messages from other agents. Read them and respond if appropriate.
+- If your speech is rejected, don't keep retrying immediately — do some work first, then try again.
+- Do NOT mark the task as done if you still need to speak. Speak first, then done.
 
 Rules:
 - The tab starts on a blank page — use navigate to go to the right URL first
@@ -33,16 +47,29 @@ Rules:
 
 
 class Agent:
-    def __init__(self, server, tab_id):
+    def __init__(self, server, tab_id, multiplexer=None, agent_id=None):
         self.server = server
         self.tab_id = tab_id
         self.client = genai.Client()
+        self.multiplexer = multiplexer
+        self.agent_id = agent_id or f"tab_{tab_id}"
 
     async def run(self, task, max_steps=100):
         history = []
 
+        if self.multiplexer:
+            self.multiplexer.register(self.agent_id)
+
         await self.server.send_status(f"[Tab {self.tab_id}] Starting: {task}")
 
+        try:
+            return await self._run_loop(task, history, max_steps)
+        finally:
+            if self.multiplexer:
+                self.multiplexer.unregister(self.agent_id)
+
+    async def _run_loop(self, task, history, max_steps):
+        self._speech_rejected = False
         for step in range(max_steps):
             print(f"[agent:{self.tab_id}] Step {step + 1}/{max_steps} for: {task}")
             screenshot_b64 = await self.server.request_screenshot(self.tab_id)
@@ -60,6 +87,17 @@ class Agent:
                 if step == 0
                 else "Updated page. Continue with the task or respond with done."
             )
+
+            # Inject multiplexer context
+            if self.multiplexer:
+                ctx = self.multiplexer.get_context(self.agent_id)
+                if self._speech_rejected:
+                    text += "\n\nYour speech was rejected — another agent is speaking right now. Try again later."
+                    self._speech_rejected = False
+                if ctx["unread_messages"]:
+                    text += "\n\nRecent messages from other agents:"
+                    for msg in ctx["unread_messages"]:
+                        text += f"\n- [{msg['agent']}]: {msg['message']}"
 
             history.append(
                 types.Content(
@@ -96,6 +134,23 @@ class Agent:
                 action = json.loads(response_text)
             except json.JSONDecodeError:
                 print(f"[agent:{self.tab_id}] JSON parse error: {response_text}")
+                continue
+
+            if "action" not in action:
+                print(f"[agent:{self.tab_id}] Missing 'action' key: {response_text}")
+                continue
+
+            # Handle speak
+            if action["action"] == "speak":
+                if self.multiplexer:
+                    message = action.get("message", "")
+                    success, _ = await self.multiplexer.try_speak(self.agent_id, message)
+                    if success:
+                        print(f"[agent:{self.tab_id}] Spoke: {message}")
+                        await self.server.send_status(f"[Tab {self.tab_id}] Spoke: {message}")
+                    else:
+                        self._speech_rejected = True
+                        print(f"[agent:{self.tab_id}] Speech rejected — channel busy")
                 continue
 
             if action["action"] == "done":
