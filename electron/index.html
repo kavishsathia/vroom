@@ -65,37 +65,147 @@
       }
     }
 
+    /* Manual theme overrides */
+    body.theme-light {
+      --bg: #fff;
+      --bg-secondary: #f8f9fa;
+      --bg-card: #fff;
+      --border: #e0e0e0;
+      --border-subtle: #f0f0f0;
+      --text: #202124;
+      --text-secondary: #5f6368;
+      --text-tertiary: #9aa0a6;
+      --accent: #202124;
+      --input-bg: #f1f3f4;
+      --btn-bg: #202124;
+      --btn-text: #fff;
+      --btn-hover: #3c4043;
+      --btn-disabled-bg: #e0e0e0;
+      --btn-disabled-text: #9aa0a6;
+      --card-active: #f8f9fa;
+      --screenshot-bg: #f1f3f4;
+      --status-done: #188038;
+      --status-running: #1a73e8;
+      --speech-queued: #e8710a;
+      --speech-spotlight: #1a73e8;
+      --log-bg: #f8f9fa;
+      --sidebar-hover: #eef0f2;
+      --sidebar-selected: #e3e6ea;
+    }
+    body.theme-dark {
+      --bg: #202124;
+      --bg-secondary: #292a2d;
+      --bg-card: #292a2d;
+      --border: #3c4043;
+      --border-subtle: #35363a;
+      --text: #e8eaed;
+      --text-secondary: #9aa0a6;
+      --text-tertiary: #5f6368;
+      --accent: #e8eaed;
+      --input-bg: #35363a;
+      --btn-bg: #e8eaed;
+      --btn-text: #202124;
+      --btn-hover: #d2d4d7;
+      --btn-disabled-bg: #3c4043;
+      --btn-disabled-text: #5f6368;
+      --card-active: #35363a;
+      --screenshot-bg: #1a1a1d;
+      --status-done: #81c995;
+      --status-running: #8ab4f8;
+      --speech-queued: #fdd663;
+      --speech-spotlight: #8ab4f8;
+      --log-bg: #292a2d;
+      --sidebar-hover: #35363a;
+      --sidebar-selected: #3c4043;
+    }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: var(--bg);
       color: var(--text);
       display: flex;
-      flex-direction: column;
       -webkit-app-region: drag;
     }
 
-    /* Title bar area for traffic lights */
+    /* Title bar */
     .title-bar {
       height: 38px;
       background: var(--bg-secondary);
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
-      padding-left: 80px;
+      padding-left: 16px;
       padding-right: 16px;
+      -webkit-app-region: drag;
     }
     .title-bar .title-text {
       font-size: 12px;
       font-weight: 500;
       color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+    .title-bar .nav-buttons {
+      display: flex;
+      gap: 2px;
+      margin-left: 12px;
+      -webkit-app-region: no-drag;
+    }
+    .title-bar .nav-btn {
+      background: none;
+      border: none;
+      color: var(--text-tertiary);
+      font-size: 16px;
+      cursor: pointer;
+      padding: 4px 7px;
+      border-radius: 4px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+    }
+    .title-bar .nav-btn:hover { color: var(--text); background: var(--sidebar-hover); }
+    .title-bar .nav-btn:disabled { opacity: 0.3; cursor: default; }
+    .title-bar .nav-btn:disabled:hover { background: none; color: var(--text-tertiary); }
+    .title-bar .url-bar {
+      flex: 1;
+      max-width: 480px;
+      margin: 0 auto;
+      -webkit-app-region: no-drag;
+    }
+    .title-bar .url-bar input {
+      width: 100%;
+      padding: 5px 12px;
+      border: none;
+      border-radius: 6px;
+      background: var(--input-bg);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 11px;
+      outline: none;
+      text-align: center;
+    }
+    .title-bar .url-bar input::placeholder { color: var(--text-tertiary); }
+    .title-bar .url-bar input:focus {
+      text-align: left;
+      box-shadow: 0 0 0 2px var(--speech-spotlight);
     }
     .title-bar .status-area {
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-left: auto;
+      flex-shrink: 0;
       -webkit-app-region: no-drag;
     }
+    .title-bar .theme-toggle {
+      background: none;
+      border: none;
+      color: var(--text-tertiary);
+      font-size: 14px;
+      cursor: pointer;
+      padding: 3px 6px;
+      border-radius: 4px;
+      line-height: 1;
+    }
+    .title-bar .theme-toggle:hover { color: var(--text); background: var(--sidebar-hover); }
     .title-bar .status-dot {
       width: 6px;
       height: 6px;
@@ -108,12 +218,18 @@
       color: var(--text-tertiary);
     }
 
-    /* Main layout: sidebar + content */
+    /* Main layout: sidebar full height on left, right column has title bar + content */
     .main-layout {
       display: flex;
       flex: 1;
       overflow: hidden;
       -webkit-app-region: no-drag;
+    }
+    .right-column {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
     }
 
     /* Sidebar */
@@ -124,11 +240,15 @@
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
+      padding-top: 38px; /* space for traffic lights */
     }
-
+    body.fullscreen .sidebar {
+      padding-top: 8px;
+    }
     .sidebar .task-section {
       padding: 12px;
       border-bottom: 1px solid var(--border);
+      position: relative;
     }
     .sidebar .task-section textarea {
       width: 100%;
@@ -183,6 +303,89 @@
       padding: 7px 12px;
     }
     .sidebar .task-section .log-btn:hover { background: var(--sidebar-hover); }
+    /* Task group */
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .sidebar .task-group {
+      margin: 0 6px 4px;
+      border-radius: 8px;
+      background: var(--input-bg);
+      overflow: hidden;
+    }
+    .sidebar .task-group .task-group-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text);
+      border: none;
+      background: none;
+      width: 100%;
+      cursor: pointer;
+      text-align: left;
+      font-family: inherit;
+    }
+    .sidebar .task-group .task-group-header:hover {
+      background: var(--sidebar-hover);
+    }
+    .sidebar .task-group .task-group-header .tab-close {
+      display: none;
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: var(--text-tertiary);
+      font-size: 14px;
+      cursor: pointer;
+      padding: 0 2px;
+      line-height: 1;
+      border-radius: 4px;
+      flex: 0 0 auto;
+    }
+    .sidebar .task-group .task-group-header:hover .tab-close {
+      display: block;
+    }
+    .sidebar .task-group .task-group-header .tab-close:hover {
+      color: var(--text);
+      background: var(--sidebar-hover);
+    }
+    .sidebar .task-group .task-group-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--status-running);
+      animation: pulse 2s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+    .sidebar .task-group.complete .task-group-dot {
+      background: var(--status-done);
+      animation: none;
+    }
+    .sidebar .task-group .task-group-label {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sidebar .task-group .task-group-tabs {
+      padding: 0 4px 4px;
+    }
+    .sidebar .task-group .task-group-tabs .sidebar-tab {
+      padding-left: 26px;
+    }
+    .sidebar .task-group .task-group-tabs .sidebar-tab .tab-dot {
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .sidebar .task-group .task-group-tabs .sidebar-tab .tab-dot.done {
+      animation: none;
+    }
+    .sidebar .task-group .task-group-tabs .sidebar-tab .tab-dot.speaking {
+      animation: none;
+    }
 
     .sidebar .tabs-header {
       padding: 10px 12px 6px;
@@ -191,8 +394,43 @@
       text-transform: uppercase;
       letter-spacing: 0.5px;
       color: var(--text-tertiary);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
-
+    .sidebar .tabs-header .new-tab-btn {
+      background: none;
+      border: none;
+      color: var(--text-tertiary);
+      font-size: 16px;
+      cursor: pointer;
+      padding: 0 4px;
+      line-height: 1;
+      border-radius: 4px;
+    }
+    .sidebar .tabs-header .new-tab-btn:hover {
+      color: var(--text);
+      background: var(--sidebar-hover);
+    }
+    .sidebar .sidebar-tab .tab-close {
+      background: none;
+      border: none;
+      color: var(--text-tertiary);
+      font-size: 14px;
+      cursor: pointer;
+      padding: 0 2px;
+      line-height: 1;
+      border-radius: 4px;
+      flex-shrink: 0;
+      display: none;
+    }
+    .sidebar .sidebar-tab:hover .tab-close {
+      display: block;
+    }
+    .sidebar .sidebar-tab .tab-close:hover {
+      color: var(--text);
+      background: var(--sidebar-hover);
+    }
     .sidebar .tab-list {
       flex: 1;
       overflow-y: auto;
@@ -203,7 +441,6 @@
       background: var(--border);
       border-radius: 2px;
     }
-
     .sidebar .sidebar-tab {
       display: flex;
       align-items: center;
@@ -221,19 +458,30 @@
       transition: background 0.1s;
       margin-bottom: 2px;
     }
-    .sidebar .sidebar-tab:hover {
-      background: var(--sidebar-hover);
-    }
+    .sidebar .sidebar-tab:hover { background: var(--sidebar-hover); }
     .sidebar .sidebar-tab.focused {
       background: var(--sidebar-selected);
       color: var(--text);
     }
-
     .sidebar .sidebar-tab .tab-dot {
       width: 8px;
       height: 8px;
       border-radius: 50%;
       flex-shrink: 0;
+    }
+    .sidebar .sidebar-tab .tab-favicon {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      border-radius: 2px;
+      object-fit: contain;
+      display: none;
+    }
+    .sidebar .sidebar-tab .tab-favicon.visible {
+      display: block;
+    }
+    .sidebar .sidebar-tab .tab-favicon.visible + .tab-dot {
+      display: none;
     }
     .sidebar .sidebar-tab .tab-dot.running { background: var(--status-running); }
     .sidebar .sidebar-tab .tab-dot.done { background: var(--status-done); }
@@ -241,7 +489,6 @@
       background: var(--speech-spotlight);
       box-shadow: 0 0 6px var(--speech-spotlight);
     }
-
     .sidebar .sidebar-tab .tab-info {
       flex: 1;
       min-width: 0;
@@ -264,7 +511,6 @@
       line-height: 1.3;
       margin-top: 2px;
     }
-
     .sidebar .sidebar-tab .tab-badge {
       font-size: 10px;
       padding: 2px 7px;
@@ -274,9 +520,7 @@
       font-weight: 500;
       flex-shrink: 0;
     }
-    .sidebar .sidebar-tab .tab-badge.done {
-      color: var(--status-done);
-    }
+    .sidebar .sidebar-tab .tab-badge.done { color: var(--status-done); }
 
     /* Content area */
     .content-area {
@@ -287,14 +531,46 @@
       min-width: 0;
     }
 
-    .grid {
+    .content-view {
+      position: relative;
       flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* Webview layer — behind grid, webviews always render at full size */
+    .webview-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+    }
+    .webview-layer webview {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    .webview-layer webview.focused {
+      z-index: 10;
+      pointer-events: auto;
+    }
+
+    /* Grid — sits on top of webview layer */
+    .grid {
+      position: absolute;
+      inset: 0;
+      z-index: 5;
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
       grid-auto-rows: 1fr;
       gap: 1px;
       padding: 1px;
       background: var(--border);
+      overflow: auto;
+    }
+    .grid.hidden {
+      display: none;
     }
 
     .tab-card {
@@ -332,9 +608,7 @@
       font-weight: 500;
       white-space: nowrap;
     }
-    .tab-card .card-header .tab-status.done {
-      color: var(--status-done);
-    }
+    .tab-card .card-header .tab-status.done { color: var(--status-done); }
     .tab-card .card-header .speech-indicator {
       font-size: 11px;
       padding: 3px 10px;
@@ -392,9 +666,7 @@
       height: 200px;
       flex-shrink: 0;
     }
-    .log-panel.open {
-      display: flex;
-    }
+    .log-panel.open { display: flex; }
     .log-panel .log-header {
       padding: 8px 16px;
       font-size: 12px;
@@ -427,19 +699,10 @@
       color: var(--text-tertiary);
       background: var(--bg);
     }
-    .empty-state p {
-      font-size: 14px;
-    }
+    .empty-state p { font-size: 14px; }
   </style>
 </head>
 <body>
-  <div class="title-bar">
-    <span class="title-text">Vroom</span>
-    <div class="status-area">
-      <div class="status-dot" id="statusDot"></div>
-      <span class="status-text" id="statusText">connecting</span>
-    </div>
-  </div>
   <div class="main-layout">
     <div class="sidebar">
       <div class="task-section">
@@ -449,18 +712,42 @@
           <button class="log-btn" id="logToggle">Logs</button>
         </div>
       </div>
-      <div class="tabs-header">Agents</div>
+      <div class="tabs-header">
+        <span>Tabs</span>
+        <button class="new-tab-btn" id="newTabBtn" title="New tab">+</button>
+      </div>
       <div class="tab-list" id="tabList"></div>
     </div>
-    <div class="content-area">
-      <div class="grid" id="grid">
-        <div class="empty-state" id="emptyState">
-          <p>waiting for task</p>
+    <div class="right-column">
+      <div class="title-bar">
+        <span class="title-text">Vroom</span>
+        <div class="nav-buttons">
+          <button class="nav-btn" id="navBack" title="Back" disabled>&#x25C0;</button>
+          <button class="nav-btn" id="navForward" title="Forward" disabled>&#x25B6;</button>
+          <button class="nav-btn" id="navRefresh" title="Refresh" disabled><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c2 0 3.8 1 4.8 2.5"/><polyline points="13.5 2 13.5 5 10.5 5"/></svg></button>
+        </div>
+        <div class="url-bar">
+          <input type="text" id="urlBar" placeholder="Enter URL..." />
+        </div>
+        <div class="status-area">
+          <button class="theme-toggle" id="themeToggle" title="Toggle theme">&#x263E;</button>
+          <div class="status-dot" id="statusDot"></div>
+          <span class="status-text" id="statusText">connecting</span>
         </div>
       </div>
-      <div class="log-panel" id="logPanel">
-        <div class="log-header">Log</div>
-        <div class="log-entries" id="logEntries"></div>
+      <div class="content-area">
+        <div class="content-view">
+          <div class="webview-layer" id="webviewLayer"></div>
+          <div class="grid" id="grid">
+            <div class="empty-state" id="emptyState">
+              <p>waiting for task</p>
+            </div>
+          </div>
+        </div>
+        <div class="log-panel" id="logPanel">
+          <div class="log-header">Log</div>
+          <div class="log-entries" id="logEntries"></div>
+        </div>
       </div>
     </div>
   </div>

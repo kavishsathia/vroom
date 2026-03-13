@@ -1,12 +1,12 @@
-const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, webContents } = require('electron');
 const path = require('path');
 const WebSocket = require('ws');
 
 let win = null;
 let ws = null;
-const tabs = {}; // tabId -> { window: BrowserWindow }
+const tabs = {}; // tabId -> { webContents }
 let nextTabId = 1;
-let activeTabId = null;
+const pendingTabRequests = {}; // requestId -> { tabIds, total, ready }
 
 function createWindow() {
   win = new BrowserWindow({
@@ -18,19 +18,18 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: true,
     },
   });
 
   win.loadFile('index.html');
 
-  // When main window moves or resizes, reposition the active child window
-  const repositionActive = () => {
-    if (activeTabId !== null && tabs[activeTabId]) {
-      toRenderer({ type: 'request_bounds' });
-    }
-  };
-  win.on('move', repositionActive);
-  win.on('resize', repositionActive);
+  win.on('enter-full-screen', () => {
+    win.webContents.executeJavaScript('document.body.classList.add("fullscreen")');
+  });
+  win.on('leave-full-screen', () => {
+    win.webContents.executeJavaScript('document.body.classList.remove("fullscreen")');
+  });
 
   connectWebSocket();
 }
@@ -55,7 +54,7 @@ function connectWebSocket() {
         return;
       }
       try {
-        const result = await entry.window.webContents.debugger.sendCommand(
+        const result = await entry.webContents.debugger.sendCommand(
           'Page.captureScreenshot',
           { format: 'jpeg', quality: 70 }
         );
@@ -73,7 +72,7 @@ function connectWebSocket() {
         return;
       }
       try {
-        const dbg = entry.window.webContents.debugger;
+        const dbg = entry.webContents.debugger;
 
         if (data.action === 'click') {
           await dbg.sendCommand('Input.dispatchMouseEvent', {
@@ -92,7 +91,7 @@ function connectWebSocket() {
             });
           }
         } else if (data.action === 'navigate') {
-          await entry.window.webContents.loadURL(data.url);
+          await entry.webContents.loadURL(data.url);
         } else if (data.action === 'scroll_down') {
           await dbg.sendCommand('Input.dispatchMouseEvent', {
             type: 'mouseWheel', x: 400, y: 400, deltaX: 0, deltaY: 300,
@@ -111,63 +110,25 @@ function connectWebSocket() {
     } else if (data.type === 'open_tabs') {
       const tabIds = [];
       for (let i = 0; i < data.count; i++) {
-        const tabId = nextTabId++;
-        const tabWin = new BrowserWindow({
-          width: 1280,
-          height: 800,
-          show: false,
-          parent: win,
-          frame: false,
-          webPreferences: {
-            contextIsolation: true,
-            nodeIntegration: false,
-            backgroundThrottling: false,
-          },
-        });
-
-        tabWin.webContents.debugger.attach('1.3');
-
-        // Listen for screencast frames
-        const currentTabId = tabId;
-        tabWin.webContents.debugger.on('message', (_, method, params) => {
-          if (method === 'Page.screencastFrame') {
-            toRenderer({ type: 'tab_screenshot', tabId: currentTabId, data: params.data });
-            tabWin.webContents.debugger.sendCommand('Page.screencastFrameAck', {
-              sessionId: params.sessionId,
-            }).catch(() => {});
-          }
-        });
-
-        await tabWin.webContents.loadURL(data.url || 'about:blank');
-
-        // Start screencast
-        await tabWin.webContents.debugger.sendCommand('Page.startScreencast', {
-          format: 'jpeg',
-          quality: 40,
-          maxWidth: 640,
-          maxHeight: 400,
-          everyNthFrame: 2,
-        });
-
-        tabs[tabId] = { window: tabWin };
-        tabIds.push(tabId);
-
-        toRenderer({ type: 'tab_opened', tabId, task: data.task || '' });
+        tabIds.push(nextTabId++);
       }
-      respond({ type: 'tabs_opened', tabIds, requestId: rid });
+      pendingTabRequests[rid] = { tabIds, total: data.count, ready: 0 };
+      toRenderer({
+        type: 'create_webviews',
+        tabIds,
+        url: data.url || 'about:blank',
+        task: data.task || '',
+        requestId: rid,
+      });
 
     } else if (data.type === 'close_tabs') {
       if (data.tabIds) {
         for (const id of data.tabIds) {
           if (tabs[id]) {
-            if (activeTabId === id) {
-              activeTabId = null;
-            }
             try {
-              tabs[id].window.webContents.debugger.sendCommand('Page.stopScreencast').catch(() => {});
-              tabs[id].window.webContents.debugger.detach();
+              tabs[id].webContents.debugger.sendCommand('Page.stopScreencast').catch(() => {});
+              tabs[id].webContents.debugger.detach();
             } catch (_) {}
-            tabs[id].window.destroy();
             delete tabs[id];
             toRenderer({ type: 'tab_closed', tabId: id });
           }
@@ -190,44 +151,49 @@ function connectWebSocket() {
   });
 }
 
-// Switch tab: position child window over the content area
-ipcMain.on('switch-tab', (_, tabId, bounds) => {
-  // Hide previous
-  if (activeTabId !== null && tabs[activeTabId] && !tabs[activeTabId].window.isDestroyed()) {
-    tabs[activeTabId].window.hide();
+ipcMain.on('webview-ready', async (_, tabId, webContentsId, requestId) => {
+  try {
+    const wc = webContents.fromId(webContentsId);
+    if (!wc) {
+      console.error('[vroom] webContents not found for id:', webContentsId);
+      return;
+    }
+
+    wc.setBackgroundThrottling(false);
+    wc.debugger.attach('1.3');
+
+    const currentTabId = tabId;
+    wc.debugger.on('message', (_, method, params) => {
+      if (method === 'Page.screencastFrame') {
+        toRenderer({ type: 'tab_screenshot', tabId: currentTabId, data: params.data });
+        wc.debugger.sendCommand('Page.screencastFrameAck', {
+          sessionId: params.sessionId,
+        }).catch(() => {});
+      }
+    });
+
+    await wc.debugger.sendCommand('Page.startScreencast', {
+      format: 'jpeg',
+      quality: 40,
+      maxWidth: 640,
+      maxHeight: 400,
+      everyNthFrame: 2,
+    });
+
+    tabs[tabId] = { webContents: wc };
+
+    const pending = pendingTabRequests[requestId];
+    if (pending) {
+      pending.ready++;
+      if (pending.ready >= pending.total) {
+        respond({ type: 'tabs_opened', tabIds: pending.tabIds, requestId });
+        delete pendingTabRequests[requestId];
+      }
+    }
+  } catch (e) {
+    console.error('[vroom] Error setting up webview:', e);
   }
-
-  if (tabId === null) {
-    activeTabId = null;
-    return;
-  }
-
-  const entry = tabs[tabId];
-  if (!entry || entry.window.isDestroyed()) return;
-
-  activeTabId = tabId;
-  positionChildWindow(entry.window, bounds);
-  entry.window.showInactive();
 });
-
-// Reposition on resize/move
-ipcMain.on('update-bounds', (_, bounds) => {
-  if (activeTabId !== null && tabs[activeTabId] && !tabs[activeTabId].window.isDestroyed()) {
-    positionChildWindow(tabs[activeTabId].window, bounds);
-  }
-});
-
-function positionChildWindow(childWin, bounds) {
-  // bounds are relative to the renderer (CSS pixels relative to the window content)
-  // Convert to screen coordinates
-  const winBounds = win.getContentBounds();
-  const x = Math.round(winBounds.x + bounds.x);
-  const y = Math.round(winBounds.y + bounds.y);
-  const width = Math.round(bounds.width);
-  const height = Math.round(bounds.height);
-
-  childWin.setBounds({ x, y, width, height });
-}
 
 function toRenderer(msg) {
   if (win && !win.isDestroyed()) {
@@ -241,11 +207,29 @@ function respond(msg) {
   }
 }
 
+ipcMain.on('close-tabs', (_, tabIds) => {
+  const serverTabIds = [];
+  for (const id of tabIds) {
+    if (tabs[id]) {
+      try {
+        tabs[id].webContents.debugger.sendCommand('Page.stopScreencast').catch(() => {});
+        tabs[id].webContents.debugger.detach();
+      } catch (_) {}
+      delete tabs[id];
+      serverTabIds.push(id);
+    }
+  }
+  if (serverTabIds.length > 0) {
+    respond({ type: 'close_tabs', tabIds: serverTabIds });
+  }
+});
+
 ipcMain.on('task', (_, text) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'task', text }));
   }
 });
+
 
 app.whenReady().then(createWindow);
 

@@ -6,18 +6,117 @@ const emptyState = document.getElementById('emptyState');
 const taskInput = document.getElementById('taskInput');
 const runBtn = document.getElementById('runBtn');
 const logEntries = document.getElementById('logEntries');
+const webviewLayer = document.getElementById('webviewLayer');
 
+const urlBar = document.getElementById('urlBar');
 const logToggle = document.getElementById('logToggle');
 const logPanel = document.getElementById('logPanel');
+const navBack = document.getElementById('navBack');
+const navForward = document.getElementById('navForward');
+const navRefresh = document.getElementById('navRefresh');
+const themeToggle = document.getElementById('themeToggle');
 
 logToggle.addEventListener('click', () => {
   logPanel.classList.toggle('open');
 });
 
+// --- Navigation buttons ---
+navBack.addEventListener('click', () => {
+  if (activeTabId === null) return;
+  const entry = tabs[activeTabId];
+  if (entry && entry.webview) entry.webview.goBack();
+});
+navForward.addEventListener('click', () => {
+  if (activeTabId === null) return;
+  const entry = tabs[activeTabId];
+  if (entry && entry.webview) entry.webview.goForward();
+});
+navRefresh.addEventListener('click', () => {
+  if (activeTabId === null) return;
+  const entry = tabs[activeTabId];
+  if (entry && entry.webview) entry.webview.reload();
+});
+
+function updateNavButtons() {
+  if (activeTabId === null || !tabs[activeTabId] || !tabs[activeTabId].webview) {
+    navBack.disabled = true;
+    navForward.disabled = true;
+    navRefresh.disabled = true;
+    return;
+  }
+  const wv = tabs[activeTabId].webview;
+  navRefresh.disabled = false;
+  try { navBack.disabled = !wv.canGoBack(); } catch (_) { navBack.disabled = true; }
+  try { navForward.disabled = !wv.canGoForward(); } catch (_) { navForward.disabled = true; }
+}
+
+// --- Theme toggle ---
+let currentTheme = 'system'; // 'system', 'light', 'dark'
+
+themeToggle.addEventListener('click', () => {
+  if (currentTheme === 'system') currentTheme = 'dark';
+  else if (currentTheme === 'dark') currentTheme = 'light';
+  else currentTheme = 'system';
+  applyTheme();
+});
+
+function applyTheme() {
+  document.body.classList.remove('theme-light', 'theme-dark');
+  if (currentTheme === 'light') {
+    document.body.classList.add('theme-light');
+    themeToggle.innerHTML = '&#x2600;'; // sun
+    themeToggle.title = 'Theme: Light (click for System)';
+  } else if (currentTheme === 'dark') {
+    document.body.classList.add('theme-dark');
+    themeToggle.innerHTML = '&#x263E;'; // moon
+    themeToggle.title = 'Theme: Dark (click for Light)';
+  } else {
+    themeToggle.innerHTML = '&#x25D1;'; // half circle
+    themeToggle.title = 'Theme: System (click for Dark)';
+  }
+}
+applyTheme();
+
+// --- Task history (terminal-style up/down arrow) ---
+const taskHistoryList = JSON.parse(localStorage.getItem('vroomTaskHistory') || '[]');
+let historyIndex = -1;
+let savedDraft = '';
+
+function addToTaskHistory(text) {
+  const idx = taskHistoryList.indexOf(text);
+  if (idx !== -1) taskHistoryList.splice(idx, 1);
+  taskHistoryList.unshift(text);
+  if (taskHistoryList.length > 50) taskHistoryList.pop();
+  localStorage.setItem('vroomTaskHistory', JSON.stringify(taskHistoryList));
+  historyIndex = -1;
+  savedDraft = '';
+}
+
 const tabs = {};
 const agentTabs = {};
 let nextAgentId = null;
 let activeTabId = null;
+let nextUserTabId = -1; // negative IDs for user tabs
+let currentTaskGroup = null; // { el, tabsContainer, dot, tabIds }
+const taskGroups = []; // all task groups for cleanup
+
+document.getElementById('newTabBtn').addEventListener('click', () => {
+  createUserTab();
+});
+
+urlBar.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (activeTabId === null) return;
+    const entry = tabs[activeTabId];
+    if (!entry || !entry.webview) return;
+    let url = urlBar.value.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    entry.webview.loadURL(url);
+    urlBar.blur();
+  }
+});
 
 runBtn.addEventListener('click', () => {
   const text = taskInput.value.trim();
@@ -26,12 +125,31 @@ runBtn.addEventListener('click', () => {
   window.vroom.sendTask(text);
   runBtn.disabled = true;
   log('Task: ' + text);
+  addToTaskHistory(text);
+  createTaskGroup(text);
+  taskInput.value = '';
+  taskInput.style.height = 'auto';
 });
 
 taskInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     runBtn.click();
+  } else if (e.key === 'ArrowUp' && taskHistoryList.length > 0) {
+    e.preventDefault();
+    if (historyIndex === -1) savedDraft = taskInput.value;
+    if (historyIndex < taskHistoryList.length - 1) {
+      historyIndex++;
+      taskInput.value = taskHistoryList[historyIndex];
+      taskInput.style.height = 'auto';
+      taskInput.style.height = Math.min(taskInput.scrollHeight, 160) + 'px';
+    }
+  } else if (e.key === 'ArrowDown' && historyIndex >= 0) {
+    e.preventDefault();
+    historyIndex--;
+    taskInput.value = historyIndex >= 0 ? taskHistoryList[historyIndex] : savedDraft;
+    taskInput.style.height = 'auto';
+    taskInput.style.height = Math.min(taskInput.scrollHeight, 160) + 'px';
   }
 });
 
@@ -40,38 +158,41 @@ taskInput.addEventListener('input', () => {
   taskInput.style.height = Math.min(taskInput.scrollHeight, 160) + 'px';
 });
 
-function getGridBounds() {
-  const rect = grid.getBoundingClientRect();
-  return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-}
-
-// Reposition child window on resize
-window.addEventListener('resize', () => {
-  if (activeTabId !== null) {
-    window.vroom.updateBounds(getGridBounds());
-  }
-});
-
 function switchToTab(tabId) {
   activeTabId = tabId;
+  grid.classList.add('hidden');
   for (const id in tabs) {
-    tabs[id].card.style.display = 'none';
-    tabs[id].sidebarTab.classList.toggle('focused', parseInt(id) === tabId);
+    const isTarget = (id == tabId); // loose comparison for string/int
+    tabs[id].sidebarTab.classList.toggle('focused', isTarget);
+    if (tabs[id].webview) {
+      tabs[id].webview.classList.toggle('focused', isTarget);
+    }
   }
-  emptyState.style.display = 'none';
-
-  requestAnimationFrame(() => {
-    window.vroom.switchTab(tabId, getGridBounds());
-  });
+  updateUrlBar();
+  updateNavButtons();
 }
 
 function switchToGrid() {
   activeTabId = null;
+  grid.classList.remove('hidden');
   for (const id in tabs) {
-    tabs[id].card.style.display = '';
     tabs[id].sidebarTab.classList.remove('focused');
+    if (tabs[id].webview) {
+      tabs[id].webview.classList.remove('focused');
+    }
   }
-  window.vroom.switchTab(null, { x: 0, y: 0, width: 0, height: 0 });
+  urlBar.value = '';
+  updateNavButtons();
+}
+
+function updateUrlBar() {
+  if (activeTabId !== null && tabs[activeTabId] && tabs[activeTabId].webview) {
+    try {
+      urlBar.value = tabs[activeTabId].webview.getURL() || '';
+    } catch (_) {
+      urlBar.value = '';
+    }
+  }
 }
 
 window.vroom.onMessage((msg) => {
@@ -111,6 +232,10 @@ window.vroom.onMessage((msg) => {
     statusText.textContent = 'Complete';
     runBtn.disabled = false;
     log('Complete: ' + msg.summary, true);
+    if (currentTaskGroup) {
+      currentTaskGroup.el.classList.add('complete');
+      currentTaskGroup = null;
+    }
 
   } else if (msg.type === 'tab_screenshot') {
     const tabId = msg.tabId;
@@ -118,11 +243,39 @@ window.vroom.onMessage((msg) => {
       tabs[tabId].img.src = 'data:image/jpeg;base64,' + msg.data;
     }
 
-  } else if (msg.type === 'tab_opened') {
-    createTabCard(msg.tabId, msg.task || `Tab ${msg.tabId}`);
-    if (nextAgentId) {
-      agentTabs[nextAgentId] = msg.tabId;
-      nextAgentId = null;
+  } else if (msg.type === 'create_webviews') {
+    for (let i = 0; i < msg.tabIds.length; i++) {
+      const tabId = msg.tabIds[i];
+      createTabCard(tabId, msg.task);
+
+      const webview = document.createElement('webview');
+      webview.src = msg.url;
+      webviewLayer.appendChild(webview);
+
+      tabs[tabId].webview = webview;
+
+      webview.addEventListener('dom-ready', () => {
+        window.vroom.registerWebview(tabId, webview.getWebContentsId(), msg.requestId);
+      });
+
+      webview.addEventListener('did-navigate', () => {
+        if (activeTabId == tabId) {
+          updateUrlBar();
+          updateNavButtons();
+        }
+      });
+
+      webview.addEventListener('page-favicon-updated', (e) => {
+        if (e.favicons && e.favicons.length > 0 && tabs[tabId] && tabs[tabId].sidebarFavicon) {
+          tabs[tabId].sidebarFavicon.src = e.favicons[0];
+          tabs[tabId].sidebarFavicon.classList.add('visible');
+        }
+      });
+
+      if (nextAgentId) {
+        agentTabs[nextAgentId] = tabId;
+        nextAgentId = null;
+      }
     }
 
   } else if (msg.type === 'tab_closed') {
@@ -157,13 +310,74 @@ window.vroom.onMessage((msg) => {
   } else if (msg.type === 'connected') {
     statusDot.classList.add('connected');
     statusText.textContent = 'Connected';
-
-  } else if (msg.type === 'request_bounds') {
-    if (activeTabId !== null) {
-      window.vroom.updateBounds(getGridBounds());
-    }
   }
 });
+
+function createTaskGroup(taskText) {
+  const group = document.createElement('div');
+  group.className = 'task-group';
+
+  const header = document.createElement('button');
+  header.className = 'task-group-header';
+
+  const dot = document.createElement('div');
+  dot.className = 'task-group-dot';
+
+  const label = document.createElement('span');
+  label.className = 'task-group-label';
+  label.textContent = taskText.length > 35 ? taskText.substring(0, 35) + '...' : taskText;
+  label.title = taskText;
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'tab-close';
+  closeBtn.textContent = '\u00d7';
+
+  header.appendChild(dot);
+  header.appendChild(label);
+  header.appendChild(closeBtn);
+
+  header.addEventListener('click', (e) => {
+    if (e.target === closeBtn) return;
+    switchToGrid();
+  });
+
+  const taskGroupData = { el: group, tabsContainer: null, dot, tabIds: [] };
+
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeTaskGroup(taskGroupData);
+  });
+
+  const tabsContainer = document.createElement('div');
+  tabsContainer.className = 'task-group-tabs';
+  taskGroupData.tabsContainer = tabsContainer;
+
+  group.appendChild(header);
+  group.appendChild(tabsContainer);
+
+  // Insert at the top of the tab list
+  tabList.insertBefore(group, tabList.firstChild);
+
+  currentTaskGroup = taskGroupData;
+  taskGroups.push(taskGroupData);
+}
+
+function closeTaskGroup(groupData) {
+  // Close all agent tabs in this group
+  const idsToClose = [...groupData.tabIds];
+  if (idsToClose.length > 0) {
+    window.vroom.closeTabs(idsToClose);
+  }
+  for (const tabId of idsToClose) {
+    removeTabCard(tabId);
+  }
+  groupData.el.remove();
+  if (currentTaskGroup === groupData) {
+    currentTaskGroup = null;
+  }
+  const idx = taskGroups.indexOf(groupData);
+  if (idx !== -1) taskGroups.splice(idx, 1);
+}
 
 function createTabCard(tabId, task) {
   if (tabs[tabId]) return;
@@ -172,6 +386,9 @@ function createTabCard(tabId, task) {
   // Sidebar tab
   const sidebarTab = document.createElement('button');
   sidebarTab.className = 'sidebar-tab';
+
+  const sidebarFavicon = document.createElement('img');
+  sidebarFavicon.className = 'tab-favicon';
 
   const sidebarDot = document.createElement('div');
   sidebarDot.className = 'tab-dot running';
@@ -196,9 +413,21 @@ function createTabCard(tabId, task) {
   sidebarBadge.className = 'tab-badge';
   sidebarBadge.textContent = 'Running';
 
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'tab-close';
+  closeBtn.textContent = '\u00d7';
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // Close this single agent tab
+    window.vroom.closeTabs([tabId]);
+    removeTabCard(tabId);
+  });
+
+  sidebarTab.appendChild(sidebarFavicon);
   sidebarTab.appendChild(sidebarDot);
   sidebarTab.appendChild(tabInfo);
   sidebarTab.appendChild(sidebarBadge);
+  sidebarTab.appendChild(closeBtn);
 
   sidebarTab.addEventListener('click', () => {
     if (activeTabId === tabId) {
@@ -208,7 +437,13 @@ function createTabCard(tabId, task) {
     }
   });
 
-  tabList.appendChild(sidebarTab);
+  // Nest agent tabs inside the current task group
+  if (currentTaskGroup) {
+    currentTaskGroup.tabsContainer.appendChild(sidebarTab);
+    currentTaskGroup.tabIds.push(tabId);
+  } else {
+    tabList.appendChild(sidebarTab);
+  }
 
   // Grid card
   const card = document.createElement('div');
@@ -263,19 +498,115 @@ function createTabCard(tabId, task) {
 
   tabs[tabId] = {
     card, img, label, statusEl, stepInfo, speechIndicator,
-    sidebarTab, sidebarDot, sidebarStep, sidebarBadge,
+    sidebarTab, sidebarDot, sidebarStep, sidebarBadge, sidebarFavicon,
+    webview: null,
   };
 }
 
 function removeTabCard(tabId) {
   if (!tabs[tabId]) return;
   if (activeTabId === tabId) switchToGrid();
-  tabs[tabId].card.remove();
+  if (tabs[tabId].card) tabs[tabId].card.remove();
   tabs[tabId].sidebarTab.remove();
+  if (tabs[tabId].webview) {
+    tabs[tabId].webview.remove();
+  }
   delete tabs[tabId];
-  if (Object.keys(tabs).length === 0) {
+
+  // Remove from task group tracking
+  for (const group of taskGroups) {
+    const idx = group.tabIds.indexOf(tabId);
+    if (idx !== -1) {
+      group.tabIds.splice(idx, 1);
+      break;
+    }
+  }
+
+  const hasAgentTabs = Object.keys(tabs).some(id => parseInt(id) > 0);
+  if (!hasAgentTabs) {
     emptyState.style.display = '';
   }
+}
+
+function createUserTab() {
+  const tabId = nextUserTabId--;
+
+  const sidebarTab = document.createElement('button');
+  sidebarTab.className = 'sidebar-tab';
+
+  const sidebarFavicon = document.createElement('img');
+  sidebarFavicon.className = 'tab-favicon';
+
+  const sidebarDot = document.createElement('div');
+  sidebarDot.className = 'tab-dot';
+  sidebarDot.style.background = 'var(--text-tertiary)';
+
+  const tabInfo = document.createElement('div');
+  tabInfo.className = 'tab-info';
+
+  const sidebarTitle = document.createElement('span');
+  sidebarTitle.className = 'tab-title';
+  sidebarTitle.textContent = 'New Tab';
+
+  tabInfo.appendChild(sidebarTitle);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'tab-close';
+  closeBtn.textContent = '\u00d7';
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    removeTabCard(tabId);
+  });
+
+  sidebarTab.appendChild(sidebarFavicon);
+  sidebarTab.appendChild(sidebarDot);
+  sidebarTab.appendChild(tabInfo);
+  sidebarTab.appendChild(closeBtn);
+
+  sidebarTab.addEventListener('click', () => {
+    if (activeTabId === tabId) {
+      switchToGrid();
+    } else {
+      switchToTab(tabId);
+    }
+  });
+
+  tabList.appendChild(sidebarTab);
+
+  const webview = document.createElement('webview');
+  webview.src = 'https://www.google.com';
+  webviewLayer.appendChild(webview);
+
+  // Update sidebar title and URL bar when the webview navigates
+  webview.addEventListener('page-title-updated', (e) => {
+    const title = e.title || 'New Tab';
+    sidebarTitle.textContent = title.length > 40 ? title.substring(0, 40) + '...' : title;
+    sidebarTitle.title = title;
+  });
+
+  webview.addEventListener('page-favicon-updated', (e) => {
+    if (e.favicons && e.favicons.length > 0) {
+      sidebarFavicon.src = e.favicons[0];
+      sidebarFavicon.classList.add('visible');
+    }
+  });
+
+  webview.addEventListener('did-navigate', () => {
+    if (activeTabId == tabId) {
+      updateUrlBar();
+      updateNavButtons();
+    }
+  });
+
+  tabs[tabId] = {
+    card: null, img: null, label: null, statusEl: null,
+    stepInfo: null, speechIndicator: null,
+    sidebarTab, sidebarDot, sidebarStep: null, sidebarBadge: null, sidebarFavicon,
+    webview,
+    isUserTab: true,
+  };
+
+  switchToTab(tabId);
 }
 
 const audioCtx = new AudioContext();
