@@ -1,12 +1,12 @@
-const { app, BrowserWindow, BrowserView, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const WebSocket = require('ws');
 
 let win = null;
 let ws = null;
-const views = {}; // tabId -> BrowserView
+const tabs = {}; // tabId -> { window: BrowserWindow }
 let nextTabId = 1;
-let focusedTabId = null;
+let activeTabId = null;
 
 function createWindow() {
   win = new BrowserWindow({
@@ -22,6 +22,16 @@ function createWindow() {
   });
 
   win.loadFile('index.html');
+
+  // When main window moves or resizes, reposition the active child window
+  const repositionActive = () => {
+    if (activeTabId !== null && tabs[activeTabId]) {
+      toRenderer({ type: 'request_bounds' });
+    }
+  };
+  win.on('move', repositionActive);
+  win.on('resize', repositionActive);
+
   connectWebSocket();
 }
 
@@ -39,30 +49,31 @@ function connectWebSocket() {
     const rid = data.requestId;
 
     if (data.type === 'screenshot_request') {
-      const view = views[data.tabId];
-      if (!view) {
+      const entry = tabs[data.tabId];
+      if (!entry) {
         respond({ type: 'screenshot_response', data: '', requestId: rid });
         return;
       }
       try {
-        const result = await view.webContents.debugger.sendCommand(
+        const result = await entry.window.webContents.debugger.sendCommand(
           'Page.captureScreenshot',
           { format: 'jpeg', quality: 70 }
         );
         respond({ type: 'screenshot_response', data: result.data, requestId: rid });
+        toRenderer({ type: 'tab_screenshot', tabId: data.tabId, data: result.data });
       } catch (e) {
         console.error('[vroom] Screenshot error:', e);
         respond({ type: 'screenshot_response', data: '', requestId: rid });
       }
 
     } else if (data.type === 'action') {
-      const view = views[data.tabId];
-      if (!view) {
+      const entry = tabs[data.tabId];
+      if (!entry) {
         respond({ type: 'action_result', success: false, requestId: rid });
         return;
       }
       try {
-        const dbg = view.webContents.debugger;
+        const dbg = entry.window.webContents.debugger;
 
         if (data.action === 'click') {
           await dbg.sendCommand('Input.dispatchMouseEvent', {
@@ -81,7 +92,7 @@ function connectWebSocket() {
             });
           }
         } else if (data.action === 'navigate') {
-          await view.webContents.loadURL(data.url);
+          await entry.window.webContents.loadURL(data.url);
         } else if (data.action === 'scroll_down') {
           await dbg.sendCommand('Input.dispatchMouseEvent', {
             type: 'mouseWheel', x: 400, y: 400, deltaX: 0, deltaY: 300,
@@ -101,32 +112,36 @@ function connectWebSocket() {
       const tabIds = [];
       for (let i = 0; i < data.count; i++) {
         const tabId = nextTabId++;
-        const view = new BrowserView({
+        const tabWin = new BrowserWindow({
+          width: 1280,
+          height: 800,
+          show: false,
+          parent: win,
+          frame: false,
           webPreferences: {
             contextIsolation: true,
             nodeIntegration: false,
+            backgroundThrottling: false,
           },
         });
-        win.addBrowserView(view);
-        // Park offscreen — screencast provides thumbnails
-        view.setBounds({ x: -9999, y: 0, width: 1280, height: 800 });
-        view.setAutoResize({ width: false, height: false });
 
-        // Attach debugger persistently
-        view.webContents.debugger.attach('1.3');
+        tabWin.webContents.debugger.attach('1.3');
 
-        await view.webContents.loadURL(data.url || 'about:blank');
-
-        // Start screencast for thumbnails
-        view.webContents.debugger.on('message', (_, method, params) => {
+        // Listen for screencast frames
+        const currentTabId = tabId;
+        tabWin.webContents.debugger.on('message', (_, method, params) => {
           if (method === 'Page.screencastFrame') {
-            toRenderer({ type: 'tab_screenshot', tabId, data: params.data });
-            view.webContents.debugger.sendCommand('Page.screencastFrameAck', {
+            toRenderer({ type: 'tab_screenshot', tabId: currentTabId, data: params.data });
+            tabWin.webContents.debugger.sendCommand('Page.screencastFrameAck', {
               sessionId: params.sessionId,
             }).catch(() => {});
           }
         });
-        await view.webContents.debugger.sendCommand('Page.startScreencast', {
+
+        await tabWin.webContents.loadURL(data.url || 'about:blank');
+
+        // Start screencast
+        await tabWin.webContents.debugger.sendCommand('Page.startScreencast', {
           format: 'jpeg',
           quality: 40,
           maxWidth: 640,
@@ -134,7 +149,7 @@ function connectWebSocket() {
           everyNthFrame: 2,
         });
 
-        views[tabId] = view;
+        tabs[tabId] = { window: tabWin };
         tabIds.push(tabId);
 
         toRenderer({ type: 'tab_opened', tabId, task: data.task || '' });
@@ -144,12 +159,16 @@ function connectWebSocket() {
     } else if (data.type === 'close_tabs') {
       if (data.tabIds) {
         for (const id of data.tabIds) {
-          if (views[id]) {
-            if (focusedTabId === id) focusedTabId = null;
-            win.removeBrowserView(views[id]);
-            try { views[id].webContents.debugger.detach(); } catch (_) {}
-            views[id].webContents.destroy();
-            delete views[id];
+          if (tabs[id]) {
+            if (activeTabId === id) {
+              activeTabId = null;
+            }
+            try {
+              tabs[id].window.webContents.debugger.sendCommand('Page.stopScreencast').catch(() => {});
+              tabs[id].window.webContents.debugger.detach();
+            } catch (_) {}
+            tabs[id].window.destroy();
+            delete tabs[id];
             toRenderer({ type: 'tab_closed', tabId: id });
           }
         }
@@ -171,36 +190,44 @@ function connectWebSocket() {
   });
 }
 
-// Focus a tab: position its BrowserView over the grid area
-ipcMain.on('focus-tab', (_, tabId, bounds) => {
-  // Park the previously focused view offscreen
-  if (focusedTabId !== null && views[focusedTabId]) {
-    views[focusedTabId].setBounds({ x: -9999, y: 0, width: 1280, height: 800 });
+// Switch tab: position child window over the content area
+ipcMain.on('switch-tab', (_, tabId, bounds) => {
+  // Hide previous
+  if (activeTabId !== null && tabs[activeTabId] && !tabs[activeTabId].window.isDestroyed()) {
+    tabs[activeTabId].window.hide();
   }
 
-  focusedTabId = tabId;
-  const view = views[tabId];
-  if (!view) return;
-
-  // Bring to top by re-adding
-  win.removeBrowserView(view);
-  win.addBrowserView(view);
-
-  view.setBounds({
-    x: Math.round(bounds.x),
-    y: Math.round(bounds.y),
-    width: Math.round(bounds.width),
-    height: Math.round(bounds.height),
-  });
-});
-
-// Unfocus: park the view offscreen
-ipcMain.on('unfocus-tab', () => {
-  if (focusedTabId !== null && views[focusedTabId]) {
-    views[focusedTabId].setBounds({ x: -9999, y: 0, width: 1280, height: 800 });
+  if (tabId === null) {
+    activeTabId = null;
+    return;
   }
-  focusedTabId = null;
+
+  const entry = tabs[tabId];
+  if (!entry || entry.window.isDestroyed()) return;
+
+  activeTabId = tabId;
+  positionChildWindow(entry.window, bounds);
+  entry.window.showInactive();
 });
+
+// Reposition on resize/move
+ipcMain.on('update-bounds', (_, bounds) => {
+  if (activeTabId !== null && tabs[activeTabId] && !tabs[activeTabId].window.isDestroyed()) {
+    positionChildWindow(tabs[activeTabId].window, bounds);
+  }
+});
+
+function positionChildWindow(childWin, bounds) {
+  // bounds are relative to the renderer (CSS pixels relative to the window content)
+  // Convert to screen coordinates
+  const winBounds = win.getContentBounds();
+  const x = Math.round(winBounds.x + bounds.x);
+  const y = Math.round(winBounds.y + bounds.y);
+  const width = Math.round(bounds.width);
+  const height = Math.round(bounds.height);
+
+  childWin.setBounds({ x, y, width, height });
+}
 
 function toRenderer(msg) {
   if (win && !win.isDestroyed()) {

@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('vroom', {
   sendTask: (text) => ipcRenderer.send('task', text),
-  focusTab: (tabId, bounds) => ipcRenderer.send('focus-tab', tabId, bounds),
-  unfocusTab: () => ipcRenderer.send('unfocus-tab'),
+  switchTab: (tabId, bounds) => ipcRenderer.send('switch-tab', tabId, bounds),
+  updateBounds: (bounds) => ipcRenderer.send('update-bounds', bounds),
   onMessage: (callback) => ipcRenderer.on('message', (_, data) => callback(data)),
 });

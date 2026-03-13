@@ -1,17 +1,23 @@
-const tabBar = document.getElementById('tabBar');
-const statusArea = document.querySelector('.status-area');
+const tabList = document.getElementById('tabList');
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
 const grid = document.getElementById('grid');
 const emptyState = document.getElementById('emptyState');
 const taskInput = document.getElementById('taskInput');
 const runBtn = document.getElementById('runBtn');
-const statusDot = document.getElementById('statusDot');
-const statusText = document.getElementById('statusText');
 const logEntries = document.getElementById('logEntries');
+
+const logToggle = document.getElementById('logToggle');
+const logPanel = document.getElementById('logPanel');
+
+logToggle.addEventListener('click', () => {
+  logPanel.classList.toggle('open');
+});
 
 const tabs = {};
 const agentTabs = {};
 let nextAgentId = null;
-let focusedTabId = null;
+let activeTabId = null;
 
 runBtn.addEventListener('click', () => {
   const text = taskInput.value.trim();
@@ -29,18 +35,44 @@ taskInput.addEventListener('keydown', (e) => {
   }
 });
 
-// Reposition focused BrowserView on resize
+taskInput.addEventListener('input', () => {
+  taskInput.style.height = 'auto';
+  taskInput.style.height = Math.min(taskInput.scrollHeight, 160) + 'px';
+});
+
+function getGridBounds() {
+  const rect = grid.getBoundingClientRect();
+  return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+}
+
+// Reposition child window on resize
 window.addEventListener('resize', () => {
-  if (focusedTabId !== null) {
-    const rect = grid.getBoundingClientRect();
-    window.vroom.focusTab(focusedTabId, {
-      x: rect.x,
-      y: rect.y,
-      width: rect.width,
-      height: rect.height,
-    });
+  if (activeTabId !== null) {
+    window.vroom.updateBounds(getGridBounds());
   }
 });
+
+function switchToTab(tabId) {
+  activeTabId = tabId;
+  for (const id in tabs) {
+    tabs[id].card.style.display = 'none';
+    tabs[id].sidebarTab.classList.toggle('focused', parseInt(id) === tabId);
+  }
+  emptyState.style.display = 'none';
+
+  requestAnimationFrame(() => {
+    window.vroom.switchTab(tabId, getGridBounds());
+  });
+}
+
+function switchToGrid() {
+  activeTabId = null;
+  for (const id in tabs) {
+    tabs[id].card.style.display = '';
+    tabs[id].sidebarTab.classList.remove('focused');
+  }
+  window.vroom.switchTab(null, { x: 0, y: 0, width: 0, height: 0 });
+}
 
 window.vroom.onMessage((msg) => {
   if (msg.type === 'status') {
@@ -57,13 +89,17 @@ window.vroom.onMessage((msg) => {
       const detail = tabMatch[2];
       if (tabs[tabId]) {
         tabs[tabId].stepInfo.textContent = detail;
+        tabs[tabId].sidebarStep.textContent = detail;
         if (detail.startsWith('Done:')) {
           tabs[tabId].statusEl.textContent = 'Done';
           tabs[tabId].statusEl.classList.add('done');
           tabs[tabId].card.classList.remove('active');
-          // Update tab bar dot
-          if (tabs[tabId].browserTabDot) {
-            tabs[tabId].browserTabDot.className = 'tab-dot done';
+          if (tabs[tabId].sidebarDot) {
+            tabs[tabId].sidebarDot.className = 'tab-dot done';
+          }
+          if (tabs[tabId].sidebarBadge) {
+            tabs[tabId].sidebarBadge.textContent = 'Done';
+            tabs[tabId].sidebarBadge.classList.add('done');
           }
         }
       }
@@ -95,7 +131,6 @@ window.vroom.onMessage((msg) => {
   } else if (msg.type === 'speech_state') {
     const tabId = agentTabs[msg.agentId];
     if (tabId && tabs[tabId]) {
-      // Update card speech indicator
       if (tabs[tabId].speechIndicator) {
         const el = tabs[tabId].speechIndicator;
         el.className = 'speech-indicator';
@@ -107,12 +142,11 @@ window.vroom.onMessage((msg) => {
           el.textContent = 'Speaking';
         }
       }
-      // Update tab bar dot
-      if (tabs[tabId].browserTabDot) {
+      if (tabs[tabId].sidebarDot) {
         if (msg.state === 'spotlight') {
-          tabs[tabId].browserTabDot.className = 'tab-dot speaking';
+          tabs[tabId].sidebarDot.className = 'tab-dot speaking';
         } else {
-          tabs[tabId].browserTabDot.className = 'tab-dot running';
+          tabs[tabId].sidebarDot.className = 'tab-dot running';
         }
       }
     }
@@ -123,6 +157,11 @@ window.vroom.onMessage((msg) => {
   } else if (msg.type === 'connected') {
     statusDot.classList.add('connected');
     statusText.textContent = 'Connected';
+
+  } else if (msg.type === 'request_bounds') {
+    if (activeTabId !== null) {
+      window.vroom.updateBounds(getGridBounds());
+    }
   }
 });
 
@@ -130,59 +169,48 @@ function createTabCard(tabId, task) {
   if (tabs[tabId]) return;
   emptyState.style.display = 'none';
 
-  // Create browser tab in tab bar
-  const browserTab = document.createElement('button');
-  browserTab.className = 'browser-tab active';
+  // Sidebar tab
+  const sidebarTab = document.createElement('button');
+  sidebarTab.className = 'sidebar-tab';
 
-  const tabDot = document.createElement('div');
-  tabDot.className = 'tab-dot running';
+  const sidebarDot = document.createElement('div');
+  sidebarDot.className = 'tab-dot running';
 
-  const tabTitle = document.createElement('span');
-  tabTitle.className = 'tab-title';
-  // Short label: use agent id if available, otherwise tab id
-  const shortLabel = task.length > 30 ? task.substring(0, 30) + '...' : task;
-  tabTitle.textContent = shortLabel;
-  tabTitle.title = task;
+  const tabInfo = document.createElement('div');
+  tabInfo.className = 'tab-info';
 
-  browserTab.appendChild(tabDot);
-  browserTab.appendChild(tabTitle);
+  const sidebarTitle = document.createElement('span');
+  sidebarTitle.className = 'tab-title';
+  const shortLabel = task.length > 40 ? task.substring(0, 40) + '...' : task;
+  sidebarTitle.textContent = shortLabel;
+  sidebarTitle.title = task;
 
-  browserTab.addEventListener('click', () => {
-    if (focusedTabId === tabId) {
-      // Unfocus — show all cards, hide live view
-      focusedTabId = null;
-      for (const id in tabs) {
-        tabs[id].card.style.display = '';
-        tabs[id].browserTab.classList.remove('focused');
-      }
-      grid.style.gridTemplateColumns = '';
-      window.vroom.unfocusTab();
+  const sidebarStep = document.createElement('span');
+  sidebarStep.className = 'tab-step';
+  sidebarStep.textContent = 'Starting...';
+
+  tabInfo.appendChild(sidebarTitle);
+  tabInfo.appendChild(sidebarStep);
+
+  const sidebarBadge = document.createElement('span');
+  sidebarBadge.className = 'tab-badge';
+  sidebarBadge.textContent = 'Running';
+
+  sidebarTab.appendChild(sidebarDot);
+  sidebarTab.appendChild(tabInfo);
+  sidebarTab.appendChild(sidebarBadge);
+
+  sidebarTab.addEventListener('click', () => {
+    if (activeTabId === tabId) {
+      switchToGrid();
     } else {
-      // Focus — hide all cards, show live BrowserView
-      focusedTabId = tabId;
-      for (const id in tabs) {
-        tabs[id].card.style.display = 'none';
-        tabs[id].browserTab.classList.toggle('focused', parseInt(id) === tabId);
-      }
-      grid.style.gridTemplateColumns = '1fr';
-
-      // Send grid bounds so main can position the BrowserView
-      requestAnimationFrame(() => {
-        const rect = grid.getBoundingClientRect();
-        window.vroom.focusTab(tabId, {
-          x: rect.x,
-          y: rect.y,
-          width: rect.width,
-          height: rect.height,
-        });
-      });
+      switchToTab(tabId);
     }
   });
 
-  // Insert before status area
-  tabBar.insertBefore(browserTab, statusArea);
+  tabList.appendChild(sidebarTab);
 
-  // Create card in grid
+  // Grid card
   const card = document.createElement('div');
   card.className = 'tab-card active';
 
@@ -233,13 +261,17 @@ function createTabCard(tabId, task) {
 
   grid.appendChild(card);
 
-  tabs[tabId] = { card, img, label, statusEl, stepInfo, speechIndicator, browserTab, browserTabDot: tabDot };
+  tabs[tabId] = {
+    card, img, label, statusEl, stepInfo, speechIndicator,
+    sidebarTab, sidebarDot, sidebarStep, sidebarBadge,
+  };
 }
 
 function removeTabCard(tabId) {
   if (!tabs[tabId]) return;
+  if (activeTabId === tabId) switchToGrid();
   tabs[tabId].card.remove();
-  tabs[tabId].browserTab.remove();
+  tabs[tabId].sidebarTab.remove();
   delete tabs[tabId];
   if (Object.keys(tabs).length === 0) {
     emptyState.style.display = '';
