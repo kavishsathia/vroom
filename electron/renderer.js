@@ -36,6 +36,8 @@ taskInput.addEventListener('drop', (e) => {
   taskInput.classList.remove('drag-over');
   const tabId = parseInt(e.dataTransfer.getData('text/tab-id'));
   if (!tabId || isNaN(tabId)) return;
+  // Only allow user tabs (negative IDs) to be attached
+  if (!tabs[tabId] || !tabs[tabId].isUserTab) return;
   if (attachedTabIds.includes(tabId)) return;
   attachedTabIds.push(tabId);
   renderAttachedTabs();
@@ -347,17 +349,25 @@ window.vroom.onMessage((msg) => {
         if (tabs[tabId].stepInfo) tabs[tabId].stepInfo.textContent = detail;
         if (tabs[tabId].sidebarStep) tabs[tabId].sidebarStep.textContent = detail;
         if (detail.startsWith('Done:')) {
-          if (tabs[tabId].statusEl) {
-            tabs[tabId].statusEl.textContent = 'Done';
-            tabs[tabId].statusEl.classList.add('done');
+          // Remove grid card but keep the tab alive
+          if (tabs[tabId].card) {
+            tabs[tabId].card.remove();
+            tabs[tabId].card = null;
+            tabs[tabId].img = null;
+            tabs[tabId].statusEl = null;
+            tabs[tabId].stepInfo = null;
+            tabs[tabId].speechIndicator = null;
           }
-          if (tabs[tabId].card) tabs[tabId].card.classList.remove('active');
           if (tabs[tabId].sidebarDot) {
             tabs[tabId].sidebarDot.className = 'tab-dot done';
           }
           if (tabs[tabId].sidebarBadge) {
             tabs[tabId].sidebarBadge.textContent = 'Done';
             tabs[tabId].sidebarBadge.classList.add('done');
+          }
+          // Check if grid is now empty of cards
+          if (!grid.querySelector('.tab-card')) {
+            emptyState.style.display = '';
           }
         }
       }
@@ -565,12 +575,6 @@ function createTabCard(tabId, task) {
   sidebarTab.appendChild(tabInfo);
   sidebarTab.appendChild(sidebarBadge);
   sidebarTab.appendChild(closeBtn);
-
-  sidebarTab.draggable = true;
-  sidebarTab.addEventListener('dragstart', (e) => {
-    e.dataTransfer.setData('text/tab-id', String(tabId));
-    e.dataTransfer.effectAllowed = 'link';
-  });
 
   sidebarTab.addEventListener('click', () => {
     if (activeTabId === tabId) {
