@@ -2,6 +2,9 @@ const { app, BrowserWindow, ipcMain, webContents } = require('electron');
 const path = require('path');
 const WebSocket = require('ws');
 
+app.name = 'Vroom';
+app.disableHardwareAcceleration();
+
 let win = null;
 let ws = null;
 const tabs = {}; // tabId -> { webContents }
@@ -159,8 +162,11 @@ ipcMain.on('webview-ready', async (_, tabId, webContentsId, requestId) => {
       return;
     }
 
+    // Skip if already registered (e.g. dom-ready fires again on navigation)
+    if (tabs[tabId]) return;
+
     wc.setBackgroundThrottling(false);
-    wc.debugger.attach('1.3');
+    try { wc.debugger.attach('1.3'); } catch (_) {}
 
     const currentTabId = tabId;
     wc.debugger.on('message', (_, method, params) => {
@@ -224,14 +230,36 @@ ipcMain.on('close-tabs', (_, tabIds) => {
   }
 });
 
-ipcMain.on('task', (_, text) => {
+ipcMain.handle('capture-tab', async (_, tabId) => {
+  const entry = tabs[tabId];
+  if (!entry) return '';
+  try {
+    const result = await entry.webContents.debugger.sendCommand(
+      'Page.captureScreenshot',
+      { format: 'jpeg', quality: 70 }
+    );
+    return result.data; // base64 string
+  } catch (e) {
+    console.error('[vroom] Capture error:', e);
+    return '';
+  }
+});
+
+ipcMain.on('task', (_, text, tabInfo) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'task', text }));
+    const msg = { type: 'task', text };
+    if (tabInfo && tabInfo.length > 0) msg.existingTabs = tabInfo;
+    ws.send(JSON.stringify(msg));
   }
 });
 
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  if (process.platform === 'darwin') {
+    app.dock.setIcon(path.join(__dirname, 'logo.png'));
+  }
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   app.quit();

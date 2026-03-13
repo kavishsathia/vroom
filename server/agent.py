@@ -33,7 +33,8 @@ Rules:
 - Do NOT mark the task as done if you still need to speak. Speak first, then done.
 
 Rules:
-- The tab starts on a blank page — use navigate to go to the right URL first
+- If the tab shows a blank page, use navigate to go to the right URL first. \
+  If the tab already has content, continue working from the current page.
 - For click, return a bounding box with exactly 4 values using normalized coordinates (0-1000 range)
 - Format is [y_min, x_min, y_max, x_max] where top-left is origin — always provide all 4 values
 - Refer to elements by their position on the page (e.g. "first result", "search box"), NOT by guessing their text content

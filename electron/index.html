@@ -236,10 +236,10 @@
     .sidebar {
       width: var(--sidebar-width);
       background: var(--bg-secondary);
-      border-right: 1px solid var(--border);
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
+      overflow: hidden;
       padding-top: 38px; /* space for traffic lights */
     }
     body.fullscreen .sidebar {
@@ -268,6 +268,38 @@
       line-height: 1.4;
     }
     .sidebar .task-section textarea::placeholder { color: var(--text-tertiary); }
+    .sidebar .task-section .attached-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 6px;
+    }
+    .sidebar .task-section .attached-tabs:empty { display: none; }
+    .sidebar .task-section .tab-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: var(--input-bg);
+      color: var(--text-secondary);
+      font-size: 11px;
+      border: 1px solid var(--border);
+    }
+    .sidebar .task-section .tab-chip .chip-remove {
+      background: none;
+      border: none;
+      color: var(--text-tertiary);
+      font-size: 12px;
+      cursor: pointer;
+      padding: 0 2px;
+      line-height: 1;
+    }
+    .sidebar .task-section .tab-chip .chip-remove:hover { color: var(--text); }
+    .sidebar .task-section textarea.drag-over {
+      box-shadow: 0 0 0 2px var(--speech-spotlight);
+      background: var(--sidebar-hover);
+    }
     .sidebar .task-section textarea:focus {
       box-shadow: 0 0 0 2px var(--speech-spotlight);
     }
@@ -522,6 +554,48 @@
     }
     .sidebar .sidebar-tab .tab-badge.done { color: var(--status-done); }
 
+    /* Resize handles */
+    .sidebar-resize-handle {
+      width: 1px;
+      cursor: col-resize;
+      background: var(--border);
+      flex-shrink: 0;
+      position: relative;
+      z-index: 10;
+    }
+    .sidebar-resize-handle::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: -3px;
+      width: 7px;
+    }
+    .sidebar-resize-handle:hover,
+    .sidebar-resize-handle.active {
+      background: var(--speech-spotlight);
+    }
+    .log-resize-handle {
+      height: 1px;
+      cursor: row-resize;
+      background: var(--border);
+      flex-shrink: 0;
+      position: relative;
+      z-index: 10;
+    }
+    .log-resize-handle::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: -3px;
+      height: 7px;
+    }
+    .log-resize-handle:hover,
+    .log-resize-handle.active {
+      background: var(--speech-spotlight);
+    }
+
     /* Content area */
     .content-area {
       flex: 1;
@@ -660,7 +734,6 @@
 
     .log-panel {
       background: var(--log-bg);
-      border-top: 1px solid var(--border);
       display: none;
       flex-direction: column;
       height: 200px;
@@ -707,6 +780,7 @@
     <div class="sidebar">
       <div class="task-section">
         <textarea id="taskInput" rows="1" placeholder="describe a task..." autofocus></textarea>
+        <div class="attached-tabs" id="attachedTabs"></div>
         <div class="task-actions">
           <button class="run-btn" id="runBtn">Run</button>
           <button class="log-btn" id="logToggle">Logs</button>
@@ -718,6 +792,7 @@
       </div>
       <div class="tab-list" id="tabList"></div>
     </div>
+    <div class="sidebar-resize-handle" id="sidebarResizeHandle"></div>
     <div class="right-column">
       <div class="title-bar">
         <span class="title-text">Vroom</span>
@@ -744,6 +819,7 @@
             </div>
           </div>
         </div>
+        <div class="log-resize-handle" id="logResizeHandle"></div>
         <div class="log-panel" id="logPanel">
           <div class="log-header">Log</div>
           <div class="log-entries" id="logEntries"></div>

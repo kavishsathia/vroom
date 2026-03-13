@@ -16,8 +16,98 @@ const navForward = document.getElementById('navForward');
 const navRefresh = document.getElementById('navRefresh');
 const themeToggle = document.getElementById('themeToggle');
 
+const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
+const logResizeHandle = document.getElementById('logResizeHandle');
+const sidebar = document.querySelector('.sidebar');
+
+const attachedTabs = document.getElementById('attachedTabs');
+const attachedTabIds = []; // tab IDs dragged into the prompt
+
+// --- Drag & drop tabs into prompt ---
+taskInput.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  taskInput.classList.add('drag-over');
+});
+taskInput.addEventListener('dragleave', () => {
+  taskInput.classList.remove('drag-over');
+});
+taskInput.addEventListener('drop', (e) => {
+  e.preventDefault();
+  taskInput.classList.remove('drag-over');
+  const tabId = parseInt(e.dataTransfer.getData('text/tab-id'));
+  if (!tabId || isNaN(tabId)) return;
+  if (attachedTabIds.includes(tabId)) return;
+  attachedTabIds.push(tabId);
+  renderAttachedTabs();
+});
+
+function renderAttachedTabs() {
+  attachedTabs.innerHTML = '';
+  for (const tabId of attachedTabIds) {
+    const chip = document.createElement('div');
+    chip.className = 'tab-chip';
+    const entry = tabs[tabId];
+    const title = entry && entry.sidebarTab
+      ? entry.sidebarTab.querySelector('.tab-title')?.textContent || `Tab ${tabId}`
+      : `Tab ${tabId}`;
+    chip.innerHTML = `<span>${title}</span>`;
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'chip-remove';
+    removeBtn.textContent = '\u00d7';
+    removeBtn.addEventListener('click', () => {
+      const idx = attachedTabIds.indexOf(tabId);
+      if (idx !== -1) attachedTabIds.splice(idx, 1);
+      renderAttachedTabs();
+    });
+    chip.appendChild(removeBtn);
+    attachedTabs.appendChild(chip);
+  }
+}
+
 logToggle.addEventListener('click', () => {
   logPanel.classList.toggle('open');
+  logResizeHandle.style.display = logPanel.classList.contains('open') ? '' : 'none';
+});
+logResizeHandle.style.display = 'none';
+
+// --- Sidebar resize ---
+sidebarResizeHandle.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  sidebarResizeHandle.classList.add('active');
+  const startX = e.clientX;
+  const startWidth = sidebar.getBoundingClientRect().width;
+
+  function onMouseMove(e) {
+    const newWidth = Math.max(160, Math.min(500, startWidth + e.clientX - startX));
+    sidebar.style.width = newWidth + 'px';
+  }
+  function onMouseUp() {
+    sidebarResizeHandle.classList.remove('active');
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+  }
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+});
+
+// --- Log panel resize ---
+logResizeHandle.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  logResizeHandle.classList.add('active');
+  const startY = e.clientY;
+  const startHeight = logPanel.getBoundingClientRect().height;
+
+  function onMouseMove(e) {
+    const newHeight = Math.max(80, Math.min(600, startHeight + startY - e.clientY));
+    logPanel.style.height = newHeight + 'px';
+  }
+  function onMouseUp() {
+    logResizeHandle.classList.remove('active');
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+  }
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
 });
 
 // --- Navigation buttons ---
@@ -118,17 +208,42 @@ urlBar.addEventListener('keydown', (e) => {
   }
 });
 
-runBtn.addEventListener('click', () => {
+runBtn.addEventListener('click', async () => {
   const text = taskInput.value.trim();
   if (!text) return;
   if (audioCtx.state === 'suspended') audioCtx.resume();
-  window.vroom.sendTask(text);
+
+  let tabInfo = undefined;
+  if (attachedTabIds.length > 0) {
+    tabInfo = [];
+    for (const tabId of attachedTabIds) {
+      const entry = tabs[tabId];
+      const info = { id: tabId, title: 'Unknown', url: '' };
+      if (entry && entry.webview) {
+        try { info.url = entry.webview.getURL(); } catch (_) {}
+        try {
+          const title = entry.sidebarTab?.querySelector('.tab-title')?.textContent;
+          if (title) info.title = title;
+        } catch (_) {}
+        // Capture screenshot via main process CDP
+        try {
+          const b64 = await window.vroom.captureTab(tabId);
+          if (b64) info.screenshot = b64;
+        } catch (_) {}
+      }
+      tabInfo.push(info);
+    }
+  }
+
+  window.vroom.sendTask(text, tabInfo);
   runBtn.disabled = true;
-  log('Task: ' + text);
+  log('Task: ' + text + (attachedTabIds.length > 0 ? ` [with tabs: ${attachedTabIds.join(', ')}]` : ''));
   addToTaskHistory(text);
   createTaskGroup(text);
   taskInput.value = '';
   taskInput.style.height = 'auto';
+  attachedTabIds.length = 0;
+  renderAttachedTabs();
 });
 
 taskInput.addEventListener('keydown', (e) => {
@@ -204,17 +319,34 @@ window.vroom.onMessage((msg) => {
       nextAgentId = spawnMatch[1];
     }
 
-    const tabMatch = msg.message.match(/\[Tab (\d+)\] (.+)/);
+    // Handle spawn on existing tab — move it into the current task group
+    const spawnOnTabMatch = msg.message.match(/Spawned executor (exec_\d+) on tab (-?\d+): (.+)/);
+    if (spawnOnTabMatch) {
+      const executorId = spawnOnTabMatch[1];
+      const existingTabId = parseInt(spawnOnTabMatch[2]);
+      if (tabs[existingTabId] && currentTaskGroup) {
+        // Move sidebar tab into the task group
+        const sidebarTab = tabs[existingTabId].sidebarTab;
+        currentTaskGroup.tabsContainer.appendChild(sidebarTab);
+        currentTaskGroup.tabIds.push(existingTabId);
+        // Map executor to tab for speech
+        agentTabs[executorId] = existingTabId;
+      }
+    }
+
+    const tabMatch = msg.message.match(/\[Tab (-?\d+)\] (.+)/);
     if (tabMatch) {
       const tabId = parseInt(tabMatch[1]);
       const detail = tabMatch[2];
       if (tabs[tabId]) {
-        tabs[tabId].stepInfo.textContent = detail;
-        tabs[tabId].sidebarStep.textContent = detail;
+        if (tabs[tabId].stepInfo) tabs[tabId].stepInfo.textContent = detail;
+        if (tabs[tabId].sidebarStep) tabs[tabId].sidebarStep.textContent = detail;
         if (detail.startsWith('Done:')) {
-          tabs[tabId].statusEl.textContent = 'Done';
-          tabs[tabId].statusEl.classList.add('done');
-          tabs[tabId].card.classList.remove('active');
+          if (tabs[tabId].statusEl) {
+            tabs[tabId].statusEl.textContent = 'Done';
+            tabs[tabId].statusEl.classList.add('done');
+          }
+          if (tabs[tabId].card) tabs[tabId].card.classList.remove('active');
           if (tabs[tabId].sidebarDot) {
             tabs[tabId].sidebarDot.className = 'tab-dot done';
           }
@@ -429,6 +561,12 @@ function createTabCard(tabId, task) {
   sidebarTab.appendChild(sidebarBadge);
   sidebarTab.appendChild(closeBtn);
 
+  sidebarTab.draggable = true;
+  sidebarTab.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/tab-id', String(tabId));
+    e.dataTransfer.effectAllowed = 'link';
+  });
+
   sidebarTab.addEventListener('click', () => {
     if (activeTabId === tabId) {
       switchToGrid();
@@ -563,6 +701,12 @@ function createUserTab() {
   sidebarTab.appendChild(tabInfo);
   sidebarTab.appendChild(closeBtn);
 
+  sidebarTab.draggable = true;
+  sidebarTab.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/tab-id', String(tabId));
+    e.dataTransfer.effectAllowed = 'link';
+  });
+
   sidebarTab.addEventListener('click', () => {
     if (activeTabId === tabId) {
       switchToGrid();
@@ -576,6 +720,11 @@ function createUserTab() {
   const webview = document.createElement('webview');
   webview.src = 'https://www.google.com';
   webviewLayer.appendChild(webview);
+
+  // Register with the server so it can screenshot/control this tab (once only)
+  webview.addEventListener('dom-ready', () => {
+    window.vroom.registerWebview(tabId, webview.getWebContentsId(), 'user');
+  }, { once: true });
 
   // Update sidebar title and URL bar when the webview navigates
   webview.addEventListener('page-title-updated', (e) => {

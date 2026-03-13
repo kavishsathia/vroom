@@ -68,16 +68,16 @@ class VroomServer:
                 if rid and rid in self._pending:
                     self._pending.pop(rid).set_result(data)
                 elif data["type"] == "task":
-                    asyncio.create_task(self._run_task(data["text"]))
+                    asyncio.create_task(self._run_task(data["text"], data.get("existingTabs")))
 
         except websockets.exceptions.ConnectionClosed:
             print("[vroom] Extension disconnected")
             self.multiplexer.stop()
 
-    async def _run_task(self, text):
+    async def _run_task(self, text, existing_tabs=None):
         try:
             extractor = Extractor(self, multiplexer=self.multiplexer)
-            await extractor.run(text)
+            await extractor.run(text, existing_tabs=existing_tabs)
 
         except Exception as e:
             import traceback

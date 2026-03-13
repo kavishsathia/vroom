@@ -1,4 +1,5 @@
 import asyncio
+import base64
 from google import genai
 from google.genai import types
 from agent import Agent
@@ -11,6 +12,9 @@ subtasks that run in parallel on separate browser tabs.
 You have these tools:
 - spawn_executor(task): Launch an executor on a new browser tab to perform a specific subtask. \
   This is async — the executor runs in the background. Be specific in the task description.
+- spawn_executor_on_tab(task, tab_id): Launch an executor on an EXISTING browser tab. \
+  The tab is already open with content — the executor will see the current page and continue from there. \
+  Use this when the user has attached existing tabs to their prompt.
 - wait_for_results(): Wait for ALL running executors to finish and get their summaries.
 - wait_for_one(executor_id): Wait for a specific executor to finish and get its summary.
 - wait_for_any(): Wait for the next executor to finish (whichever completes first) and get its summary.
@@ -52,6 +56,26 @@ TOOLS = [
                         )
                     },
                     required=["task"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="spawn_executor_on_tab",
+                description="Launch an executor on an EXISTING browser tab (already open with content). "
+                "Use this when the user has attached tabs to their prompt. The executor will see "
+                "the current page on that tab and continue from there — no need to navigate.",
+                parameters=types.Schema(
+                    type="OBJECT",
+                    properties={
+                        "task": types.Schema(
+                            type="STRING",
+                            description="Specific task for the executor to perform on the existing tab",
+                        ),
+                        "tab_id": types.Schema(
+                            type="INTEGER",
+                            description="The ID of the existing tab to use",
+                        ),
+                    },
+                    required=["task", "tab_id"],
                 ),
             ),
             types.FunctionDeclaration(
@@ -113,15 +137,42 @@ class Extractor:
         self._running = {}  # executor_id -> asyncio.Task
         self._results = {}  # executor_id -> summary string
 
-    async def run(self, task):
+    async def run(self, task, existing_tabs=None):
         print(f"[extractor] Starting: {task}")
         await self.server.send_status(f"Extractor starting: {task}")
 
+        parts = []
+        prompt = f"Task: {task}"
+
+        if existing_tabs:
+            tab_descriptions = []
+            for tab in existing_tabs:
+                tab_id = tab.get("id")
+                title = tab.get("title", "Unknown")
+                url = tab.get("url", "")
+                tab_descriptions.append(f"- Tab {tab_id}: \"{title}\" ({url})")
+            prompt += "\n\nThe user has attached these existing tabs:\n" + "\n".join(tab_descriptions)
+            prompt += "\n\nUse spawn_executor_on_tab to run tasks on these tabs instead of opening new ones."
+            prompt += "\nScreenshots of each tab follow in order:"
+
+            parts.append(types.Part(text=prompt))
+
+            for tab in existing_tabs:
+                screenshot_b64 = tab.get("screenshot")
+                tab_id = tab.get("id")
+                if screenshot_b64:
+                    parts.append(types.Part(text=f"Screenshot of Tab {tab_id}:"))
+                    parts.append(types.Part(
+                        inline_data=types.Blob(
+                            data=base64.b64decode(screenshot_b64),
+                            mime_type="image/jpeg",
+                        )
+                    ))
+        else:
+            parts.append(types.Part(text=prompt))
+
         history = [
-            types.Content(
-                role="user",
-                parts=[types.Part(text=f"Task: {task}")],
-            )
+            types.Content(role="user", parts=parts)
         ]
 
         while True:
@@ -176,6 +227,20 @@ class Extractor:
                             function_response=types.FunctionResponse(
                                 name="spawn_executor",
                                 response={"executor_id": executor_id, "status": "spawned"},
+                            )
+                        )
+                    )
+
+                elif fc.name == "spawn_executor_on_tab":
+                    subtask = fc.args.get("task", "")
+                    tab_id = int(fc.args.get("tab_id", 0))
+                    executor_id = self._spawn_on_tab(subtask, tab_id)
+                    await self.server.send_status(f"Spawned executor {executor_id} on tab {tab_id}: {subtask}")
+                    function_responses.append(
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                name="spawn_executor_on_tab",
+                                response={"executor_id": executor_id, "tab_id": tab_id, "status": "spawned"},
                             )
                         )
                     )
@@ -258,6 +323,24 @@ class Extractor:
 
         self._running[executor_id] = asyncio.create_task(_run_executor())
         print(f"[extractor] Spawned {executor_id}: {subtask}")
+        return executor_id
+
+    def _spawn_on_tab(self, subtask, tab_id):
+        """Spawn an executor on an existing tab — no new tab is opened or closed."""
+        self._executor_counter += 1
+        executor_id = f"exec_{self._executor_counter}"
+
+        async def _run_executor():
+            try:
+                agent = Agent(self.server, tab_id, multiplexer=self.multiplexer, agent_id=executor_id)
+                result = await agent.run(subtask)
+                self._results[executor_id] = result
+            except Exception as e:
+                self._results[executor_id] = f"Error: {e}"
+            # Note: we do NOT close the tab — it was pre-existing
+
+        self._running[executor_id] = asyncio.create_task(_run_executor())
+        print(f"[extractor] Spawned {executor_id} on existing tab {tab_id}: {subtask}")
         return executor_id
 
     async def _wait_for_results(self):
