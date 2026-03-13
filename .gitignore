@@ -8,3 +8,7 @@ venv/
 
 # Debug output
 debug/
+
+# Electron
+electron/node_modules/
+electron/package-lock.json
