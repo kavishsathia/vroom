@@ -1,3 +1,5 @@
+const tabBar = document.getElementById('tabBar');
+const statusArea = document.querySelector('.status-area');
 const grid = document.getElementById('grid');
 const emptyState = document.getElementById('emptyState');
 const taskInput = document.getElementById('taskInput');
@@ -9,6 +11,7 @@ const logEntries = document.getElementById('logEntries');
 const tabs = {};
 const agentTabs = {};
 let nextAgentId = null;
+let focusedTabId = null;
 
 runBtn.addEventListener('click', () => {
   const text = taskInput.value.trim();
@@ -23,6 +26,19 @@ taskInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     runBtn.click();
+  }
+});
+
+// Reposition focused BrowserView on resize
+window.addEventListener('resize', () => {
+  if (focusedTabId !== null) {
+    const rect = grid.getBoundingClientRect();
+    window.vroom.focusTab(focusedTabId, {
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+    });
   }
 });
 
@@ -45,6 +61,10 @@ window.vroom.onMessage((msg) => {
           tabs[tabId].statusEl.textContent = 'Done';
           tabs[tabId].statusEl.classList.add('done');
           tabs[tabId].card.classList.remove('active');
+          // Update tab bar dot
+          if (tabs[tabId].browserTabDot) {
+            tabs[tabId].browserTabDot.className = 'tab-dot done';
+          }
         }
       }
     }
@@ -74,15 +94,26 @@ window.vroom.onMessage((msg) => {
 
   } else if (msg.type === 'speech_state') {
     const tabId = agentTabs[msg.agentId];
-    if (tabId && tabs[tabId] && tabs[tabId].speechIndicator) {
-      const el = tabs[tabId].speechIndicator;
-      el.className = 'speech-indicator';
-      if (msg.state === 'queued') {
-        el.classList.add('queued');
-        el.textContent = 'Wants to speak';
-      } else if (msg.state === 'spotlight') {
-        el.classList.add('spotlight');
-        el.textContent = 'Speaking';
+    if (tabId && tabs[tabId]) {
+      // Update card speech indicator
+      if (tabs[tabId].speechIndicator) {
+        const el = tabs[tabId].speechIndicator;
+        el.className = 'speech-indicator';
+        if (msg.state === 'queued') {
+          el.classList.add('queued');
+          el.textContent = 'Wants to speak';
+        } else if (msg.state === 'spotlight') {
+          el.classList.add('spotlight');
+          el.textContent = 'Speaking';
+        }
+      }
+      // Update tab bar dot
+      if (tabs[tabId].browserTabDot) {
+        if (msg.state === 'spotlight') {
+          tabs[tabId].browserTabDot.className = 'tab-dot speaking';
+        } else {
+          tabs[tabId].browserTabDot.className = 'tab-dot running';
+        }
       }
     }
 
@@ -99,6 +130,59 @@ function createTabCard(tabId, task) {
   if (tabs[tabId]) return;
   emptyState.style.display = 'none';
 
+  // Create browser tab in tab bar
+  const browserTab = document.createElement('button');
+  browserTab.className = 'browser-tab active';
+
+  const tabDot = document.createElement('div');
+  tabDot.className = 'tab-dot running';
+
+  const tabTitle = document.createElement('span');
+  tabTitle.className = 'tab-title';
+  // Short label: use agent id if available, otherwise tab id
+  const shortLabel = task.length > 30 ? task.substring(0, 30) + '...' : task;
+  tabTitle.textContent = shortLabel;
+  tabTitle.title = task;
+
+  browserTab.appendChild(tabDot);
+  browserTab.appendChild(tabTitle);
+
+  browserTab.addEventListener('click', () => {
+    if (focusedTabId === tabId) {
+      // Unfocus — show all cards, hide live view
+      focusedTabId = null;
+      for (const id in tabs) {
+        tabs[id].card.style.display = '';
+        tabs[id].browserTab.classList.remove('focused');
+      }
+      grid.style.gridTemplateColumns = '';
+      window.vroom.unfocusTab();
+    } else {
+      // Focus — hide all cards, show live BrowserView
+      focusedTabId = tabId;
+      for (const id in tabs) {
+        tabs[id].card.style.display = 'none';
+        tabs[id].browserTab.classList.toggle('focused', parseInt(id) === tabId);
+      }
+      grid.style.gridTemplateColumns = '1fr';
+
+      // Send grid bounds so main can position the BrowserView
+      requestAnimationFrame(() => {
+        const rect = grid.getBoundingClientRect();
+        window.vroom.focusTab(tabId, {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        });
+      });
+    }
+  });
+
+  // Insert before status area
+  tabBar.insertBefore(browserTab, statusArea);
+
+  // Create card in grid
   const card = document.createElement('div');
   card.className = 'tab-card active';
 
@@ -149,12 +233,13 @@ function createTabCard(tabId, task) {
 
   grid.appendChild(card);
 
-  tabs[tabId] = { card, img, label, statusEl, stepInfo, speechIndicator };
+  tabs[tabId] = { card, img, label, statusEl, stepInfo, speechIndicator, browserTab, browserTabDot: tabDot };
 }
 
 function removeTabCard(tabId) {
   if (!tabs[tabId]) return;
   tabs[tabId].card.remove();
+  tabs[tabId].browserTab.remove();
   delete tabs[tabId];
   if (Object.keys(tabs).length === 0) {
     emptyState.style.display = '';

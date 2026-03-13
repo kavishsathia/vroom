@@ -69,30 +69,83 @@
       -webkit-app-region: drag;
     }
 
-    .header {
+    .tab-bar {
+      display: flex;
+      align-items: flex-end;
+      padding-left: 80px; /* space for traffic lights */
+      padding-top: 8px;
+      padding-right: 12px;
+      gap: 2px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      min-height: 44px;
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+    .tab-bar::-webkit-scrollbar { display: none; }
+    .tab-bar .browser-tab {
       display: flex;
       align-items: center;
-      gap: 12px;
-      padding: 16px 24px;
-      padding-top: 36px; /* space for traffic lights */
-      border-bottom: 1px solid var(--border);
+      gap: 8px;
+      padding: 8px 16px;
+      background: transparent;
+      border: none;
+      border-radius: 8px 8px 0 0;
+      color: var(--text-secondary);
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+      max-width: 200px;
+      min-width: 0;
+      -webkit-app-region: no-drag;
+      transition: background 0.1s;
     }
-    .header h1 {
-      font-size: 14px;
-      font-weight: 600;
+    .tab-bar .browser-tab:hover {
+      background: var(--input-bg);
+    }
+    .tab-bar .browser-tab.active {
+      background: var(--bg);
       color: var(--text);
-      letter-spacing: 0.02em;
     }
-    .header .status-dot {
-      width: 8px;
-      height: 8px;
+    .tab-bar .browser-tab.focused {
+      background: var(--bg);
+      color: var(--text);
+      border-bottom: 2px solid var(--status-running);
+    }
+    .tab-bar .browser-tab .tab-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tab-bar .browser-tab .tab-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .tab-bar .browser-tab .tab-dot.running { background: var(--status-running); }
+    .tab-bar .browser-tab .tab-dot.done { background: var(--status-done); }
+    .tab-bar .browser-tab .tab-dot.speaking { background: var(--speech-spotlight); }
+    .tab-bar .status-area {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+      padding: 8px 8px;
+      flex-shrink: 0;
+      -webkit-app-region: no-drag;
+    }
+    .tab-bar .status-dot {
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
       background: var(--text-tertiary);
     }
-    .header .status-dot.connected { background: var(--status-done); }
-    .header .status-text {
-      font-size: 13px;
-      color: var(--text-secondary);
+    .tab-bar .status-dot.connected { background: var(--status-done); }
+    .tab-bar .status-text {
+      font-size: 11px;
+      color: var(--text-tertiary);
     }
 
     .task-bar {
@@ -285,10 +338,11 @@
   </style>
 </head>
 <body>
-  <div class="header">
-    <h1>Vroom</h1>
-    <div class="status-dot" id="statusDot"></div>
-    <span class="status-text" id="statusText">connecting</span>
+  <div class="tab-bar" id="tabBar">
+    <div class="status-area">
+      <div class="status-dot" id="statusDot"></div>
+      <span class="status-text" id="statusText">connecting</span>
+    </div>
   </div>
   <div class="task-bar">
     <input type="text" id="taskInput" placeholder="describe a task..." autofocus />
