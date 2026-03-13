@@ -514,6 +514,12 @@ window.vroom.onMessage((msg) => {
   } else if (msg.type === 'audio') {
     playAudio(msg.data, msg.agentId);
 
+  } else if (msg.type === 'clear_audio') {
+    stopAllAudio();
+
+  } else if (msg.type === 'preempt_transcript') {
+    log('You said: ' + msg.text, true);
+
   } else if (msg.type === 'connected') {
     statusDot.classList.add('connected');
     statusText.textContent = 'Connected';
@@ -919,6 +925,7 @@ function createUserTab(url = 'https://www.google.com') {
 }
 
 const audioCtx = new AudioContext();
+const activeSources = new Set();
 
 async function playAudio(b64Data, agentId) {
   if (audioCtx.state === 'suspended') await audioCtx.resume();
@@ -939,10 +946,63 @@ async function playAudio(b64Data, agentId) {
   const source = audioCtx.createBufferSource();
   source.buffer = buffer;
   source.connect(audioCtx.destination);
+  source.onended = () => activeSources.delete(source);
+  activeSources.add(source);
   source.start();
 
   log(`[${agentId}] Speaking...`);
 }
+
+function stopAllAudio() {
+  for (const source of activeSources) {
+    try { source.stop(); } catch (_) {}
+  }
+  activeSources.clear();
+}
+
+// --- Unmute / Push-to-talk ---
+let mediaRecorder = null;
+let recordedChunks = [];
+let isRecording = false;
+
+const unmuteBtn = document.getElementById('unmuteBtn');
+
+unmuteBtn.addEventListener('click', async () => {
+  if (!isRecording) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      recordedChunks = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) recordedChunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+        const arrayBuffer = await blob.arrayBuffer();
+        const b64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+        window.vroom.preemptAudio(b64, 'audio/webm');
+        log('Sending speech to server...', true);
+      };
+
+      window.vroom.preemptStart();
+      mediaRecorder.start();
+      isRecording = true;
+      unmuteBtn.classList.add('active');
+      unmuteBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="19" x2="12" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+      log('Recording...', true);
+    } catch (e) {
+      log('Mic access denied: ' + e.message);
+    }
+  } else {
+    mediaRecorder.stop();
+    isRecording = false;
+    unmuteBtn.classList.remove('active');
+    unmuteBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
+  }
+});
 
 function log(text, highlight = false) {
   const entry = document.createElement('div');

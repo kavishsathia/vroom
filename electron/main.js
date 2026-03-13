@@ -137,7 +137,7 @@ function connectWebSocket() {
         }
       }
 
-    } else if (data.type === 'audio' || data.type === 'speech_state' || data.type === 'status' || data.type === 'complete') {
+    } else if (data.type === 'audio' || data.type === 'speech_state' || data.type === 'status' || data.type === 'complete' || data.type === 'clear_audio' || data.type === 'preempt_transcript') {
       toRenderer(data);
     }
   });
@@ -249,6 +249,18 @@ ipcMain.on('task', (_, text, tabInfo) => {
     const msg = { type: 'task', text };
     if (tabInfo && tabInfo.length > 0) msg.existingTabs = tabInfo;
     ws.send(JSON.stringify(msg));
+  }
+});
+
+ipcMain.on('preempt-start', () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'preempt_start' }));
+  }
+});
+
+ipcMain.on('preempt-audio', (_, audioB64, mimeType) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'preempt_audio', data: audioB64, mimeType }));
   }
 });
 

@@ -5,5 +5,7 @@ contextBridge.exposeInMainWorld('vroom', {
   captureTab: (tabId) => ipcRenderer.invoke('capture-tab', tabId),
   registerWebview: (tabId, webContentsId, requestId) => ipcRenderer.send('webview-ready', tabId, webContentsId, requestId),
   closeTabs: (tabIds) => ipcRenderer.send('close-tabs', tabIds),
+  preemptStart: () => ipcRenderer.send('preempt-start'),
+  preemptAudio: (audioB64, mimeType) => ipcRenderer.send('preempt-audio', audioB64, mimeType),
   onMessage: (callback) => ipcRenderer.on('message', (_, data) => callback(data)),
 });

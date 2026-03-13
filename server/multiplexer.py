@@ -12,7 +12,7 @@ BYTES_PER_SECOND = SAMPLE_RATE * SAMPLE_WIDTH * CHANNELS  # 48000
 
 
 class Multiplexer:
-    def __init__(self, on_message=None, on_audio=None, on_state_change=None, voice="Kore"):
+    def __init__(self, on_message=None, on_audio=None, on_state_change=None, on_clear_audio=None, voice="Kore"):
         self.conversation = []  # [{agent_id, message, timestamp}]
         self.read_pointers = {}  # agent_id -> int
         self._spotlight = None  # agent_id currently generating TTS
@@ -20,8 +20,13 @@ class Multiplexer:
         self._on_message = on_message  # callback(agent_id, message)
         self._on_audio = on_audio  # async callback(agent_id, audio_b64, duration)
         self._on_state_change = on_state_change  # async callback(agent_id, state)
+        self._on_clear_audio = on_clear_audio  # async callback()
         self._voice = voice
         self._client = genai.Client()
+        self._resume_event = asyncio.Event()
+        self._resume_event.set()  # starts unpaused
+        self._preempt_event = asyncio.Event()  # set when preempt fires, to cancel sleeps
+        self._pending_user_messages = []  # buffered for extractor to drain
 
     def register(self, agent_id):
         self.read_pointers[agent_id] = len(self.conversation)
@@ -77,7 +82,12 @@ class Multiplexer:
             if self._audio_free_at > now:
                 wait = self._audio_free_at - now
                 print(f"[mux] Waiting {wait:.1f}s for previous audio to finish")
-                await asyncio.sleep(wait)
+                if await self._interruptible_sleep(wait):
+                    print(f"[mux] {agent_id} interrupted during audio wait")
+                    self._spotlight = None
+                    if self._on_state_change:
+                        await self._on_state_change(agent_id, "idle")
+                    return True, None
 
             # Send audio and track when it finishes
             if self._on_audio:
@@ -91,7 +101,7 @@ class Multiplexer:
                 await self._on_state_change(agent_id, "idle")
 
             # Block this agent until its own audio finishes playing
-            await asyncio.sleep(duration)
+            await self._interruptible_sleep(duration)
         except Exception as e:
             print(f"[mux] TTS error: {e}")
             self._spotlight = None
@@ -118,7 +128,10 @@ class Multiplexer:
                         ),
                     ),
                 )
-                audio_data = response.candidates[0].content.parts[0].inline_data.data
+                candidate = response.candidates[0]
+                if not candidate.content or not candidate.content.parts:
+                    raise ValueError(f"Empty TTS response (finish_reason={getattr(candidate, 'finish_reason', 'unknown')})")
+                audio_data = candidate.content.parts[0].inline_data.data
                 if isinstance(audio_data, str):
                     audio_bytes = base64.b64decode(audio_data)
                 else:
@@ -132,5 +145,49 @@ class Multiplexer:
                 else:
                     raise
 
+    async def _interruptible_sleep(self, seconds):
+        """Sleep that can be interrupted by preempt. Returns True if interrupted."""
+        self._preempt_event.clear()
+        try:
+            await asyncio.wait_for(self._preempt_event.wait(), timeout=seconds)
+            return True  # was interrupted
+        except asyncio.TimeoutError:
+            return False  # completed naturally
+
+    async def preempt(self):
+        """Pause all agents, clear audio."""
+        print(f"[mux] PREEMPT: pausing pipeline")
+        self._resume_event.clear()
+        self._spotlight = None
+        self._audio_free_at = 0
+        self._preempt_event.set()  # interrupt any sleeping agents
+        if self._on_clear_audio:
+            await self._on_clear_audio()
+
+    async def broadcast_user_message(self, message):
+        """Broadcast user's message to all agents and resume."""
+        print(f"[mux] USER: {message}")
+        self.conversation.append({
+            "agent_id": "user",
+            "message": message,
+            "timestamp": time.time(),
+        })
+        self._pending_user_messages.append(message)
+        if self._on_message:
+            self._on_message("user", message)
+        self._resume_event.set()
+        print(f"[mux] Pipeline resumed")
+
+    def drain_user_messages(self):
+        """Drain buffered user messages (called by extractor)."""
+        msgs = list(self._pending_user_messages)
+        self._pending_user_messages.clear()
+        return msgs
+
+    async def wait_if_paused(self):
+        """Agents call this before each step. Blocks while paused."""
+        await self._resume_event.wait()
+
     def stop(self):
         self._spotlight = None
+        self._resume_event.set()

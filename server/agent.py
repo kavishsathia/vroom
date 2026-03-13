@@ -72,6 +72,8 @@ class Agent:
     async def _run_loop(self, task, history, max_steps):
         self._speech_rejected = False
         for step in range(max_steps):
+            if self.multiplexer:
+                await self.multiplexer.wait_if_paused()
             print(f"[agent:{self.tab_id}] Step {step + 1}/{max_steps} for: {task}")
             screenshot_b64 = await self.server.request_screenshot(self.tab_id)
             raw_bytes = base64.b64decode(screenshot_b64)
@@ -96,9 +98,12 @@ class Agent:
                     text += "\n\nYour speech was rejected — another agent is speaking right now. Try again later."
                     self._speech_rejected = False
                 if ctx["unread_messages"]:
-                    text += "\n\nRecent messages from other agents:"
+                    text += "\n\nRecent messages:"
                     for msg in ctx["unread_messages"]:
-                        text += f"\n- [{msg['agent']}]: {msg['message']}"
+                        if msg["agent"] == "user":
+                            text += f"\n- [USER INSTRUCTION]: {msg['message']} — Follow this instruction if it is relevant to your current task."
+                        else:
+                            text += f"\n- [{msg['agent']}]: {msg['message']}"
 
             history.append(
                 types.Content(
