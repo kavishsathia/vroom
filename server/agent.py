@@ -92,18 +92,22 @@ class Agent:
             )
 
             # Inject multiplexer context
+            extra_parts = []
             if self.multiplexer:
                 ctx = self.multiplexer.get_context(self.agent_id)
                 if self._speech_rejected:
                     text += "\n\nYour speech was rejected — another agent is speaking right now. Try again later."
                     self._speech_rejected = False
                 if ctx["unread_messages"]:
-                    text += "\n\nRecent messages:"
+                    text += "\n\nRecent messages from other agents:"
                     for msg in ctx["unread_messages"]:
-                        if msg["agent"] == "user":
-                            text += f"\n- [USER INSTRUCTION]: {msg['message']} — Follow this instruction if it is relevant to your current task."
-                        else:
-                            text += f"\n- [{msg['agent']}]: {msg['message']}"
+                        text += f"\n- [{msg['agent']}]: {msg['message']}"
+                if ctx["user_audio"]:
+                    text += "\n\n[USER INSTRUCTION]: The user has spoken. Listen to the audio below and follow the instruction if it is relevant to your current task."
+                    for audio_bytes, mime_type in ctx["user_audio"]:
+                        extra_parts.append(types.Part(
+                            inline_data=types.Blob(data=audio_bytes, mime_type=mime_type)
+                        ))
 
             history.append(
                 types.Content(
@@ -115,6 +119,7 @@ class Agent:
                             )
                         ),
                         types.Part(text=text),
+                        *extra_parts,
                     ],
                 )
             )

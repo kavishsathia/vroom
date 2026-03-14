@@ -998,6 +998,7 @@ unmuteBtn.addEventListener('click', async () => {
     }
   } else {
     mediaRecorder.stop();
+    window.vroom.preemptEnd();
     isRecording = false;
     unmuteBtn.classList.remove('active');
     unmuteBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';

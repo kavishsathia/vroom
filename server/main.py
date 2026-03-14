@@ -3,8 +3,6 @@ import base64
 import json
 from dotenv import load_dotenv
 import websockets
-from google import genai
-from google.genai import types
 from extractor import Extractor
 from multiplexer import Multiplexer
 
@@ -16,7 +14,6 @@ class VroomServer:
         self.ws = None
         self._pending = {}  # requestId -> future
         self._request_counter = 0
-        self._genai_client = genai.Client()
         self.multiplexer = Multiplexer(
             on_message=self._on_agent_message,
             on_audio=self._on_agent_audio,
@@ -72,6 +69,7 @@ class VroomServer:
         try:
             async for message in websocket:
                 data = json.loads(message)
+                print(f"[ws] Received: {data.get('type', '?')}")
 
                 rid = data.get("requestId")
                 if rid and rid in self._pending:
@@ -81,6 +79,9 @@ class VroomServer:
                 elif data["type"] == "preempt_start":
                     await self.multiplexer.preempt()
                     await self.send_status("User is speaking...")
+                elif data["type"] == "preempt_end":
+                    self.multiplexer.resume()
+                    await self.send_status("User finished speaking")
                 elif data["type"] == "preempt_audio":
                     asyncio.create_task(self._handle_preempt_audio(data["data"], data.get("mimeType", "audio/webm")))
 
@@ -89,27 +90,11 @@ class VroomServer:
             self.multiplexer.stop()
 
     async def _handle_preempt_audio(self, audio_b64, mime_type):
-        """Transcribe user audio via Gemini and broadcast to agents."""
-        try:
-            audio_bytes = base64.b64decode(audio_b64)
-            response = await self._genai_client.aio.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=[
-                    types.Content(role="user", parts=[
-                        types.Part(inline_data=types.Blob(data=audio_bytes, mime_type=mime_type)),
-                        types.Part(text="Transcribe this audio exactly. Return only the transcription, nothing else."),
-                    ])
-                ],
-            )
-            transcript = response.text.strip()
-            print(f"[vroom] User said: {transcript}")
-            await self.send_status(f"User: {transcript}")
-            await self.ws.send(json.dumps({"type": "preempt_transcript", "text": transcript}))
-            await self.multiplexer.broadcast_user_message(transcript)
-        except Exception as e:
-            print(f"[vroom] STT error: {e}")
-            await self.send_status(f"STT error: {e}")
-            self.multiplexer._resume_event.set()  # resume even on error
+        """Store user audio for agents and extractor to consume directly, then resume."""
+        audio_bytes = base64.b64decode(audio_b64)
+        self.multiplexer.broadcast_user_audio(audio_bytes, mime_type)
+        self.multiplexer.resume()
+        await self.send_status("User finished speaking")
 
     async def _run_task(self, text, existing_tabs=None):
         try:

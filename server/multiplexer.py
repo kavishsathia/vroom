@@ -26,7 +26,7 @@ class Multiplexer:
         self._resume_event = asyncio.Event()
         self._resume_event.set()  # starts unpaused
         self._preempt_event = asyncio.Event()  # set when preempt fires, to cancel sleeps
-        self._pending_user_messages = []  # buffered for extractor to drain
+        self._pending_user_audio = []  # [(audio_bytes, mime_type)] buffered for extractor
 
     def register(self, agent_id):
         self.read_pointers[agent_id] = len(self.conversation)
@@ -35,22 +35,31 @@ class Multiplexer:
         self.read_pointers.pop(agent_id, None)
 
     def get_context(self, agent_id):
-        """Get unread messages for an agent."""
+        """Get unread messages/audio for an agent."""
         pointer = self.read_pointers.get(agent_id, 0)
         unread = self.conversation[pointer:]
         self.read_pointers[agent_id] = len(self.conversation)
+        messages = []
+        audio_parts = []
+        for m in unread:
+            if m["agent_id"] == agent_id:
+                continue
+            if m["agent_id"] == "user" and "audio_bytes" in m:
+                audio_parts.append((m["audio_bytes"], m["mime_type"]))
+            elif "message" in m:
+                messages.append({"agent": m["agent_id"], "message": m["message"]})
         return {
-            "unread_messages": [
-                {"agent": m["agent_id"], "message": m["message"]}
-                for m in unread
-                if m["agent_id"] != agent_id
-            ],
+            "unread_messages": messages,
+            "user_audio": audio_parts,
         }
 
     async def try_speak(self, agent_id, message):
         """Try to claim spotlight and speak. Returns (success, None).
         Spotlight covers TTS generation only. While previous audio plays,
         one agent can generate TTS in parallel. A third agent is rejected."""
+        if not self._resume_event.is_set():
+            print(f"[mux] {agent_id} rejected — pipeline is paused")
+            return False, None
         if self._spotlight is not None:
             print(f"[mux] {agent_id} rejected — {self._spotlight} is generating TTS")
             return False, None
@@ -89,6 +98,14 @@ class Multiplexer:
                         await self._on_state_change(agent_id, "idle")
                     return True, None
 
+            # Don't send audio if we got preempted during TTS generation
+            if not self._resume_event.is_set():
+                print(f"[mux] {agent_id} audio discarded — pipeline paused during TTS")
+                self._spotlight = None
+                if self._on_state_change:
+                    await self._on_state_change(agent_id, "idle")
+                return True, None
+
             # Send audio and track when it finishes
             if self._on_audio:
                 await self._on_audio(agent_id, audio_b64, duration)
@@ -97,11 +114,13 @@ class Multiplexer:
             # Release spotlight — next agent can start generating TTS
             self._spotlight = None
             print(f"[mux] Spotlight released by {agent_id}")
-            if self._on_state_change:
-                await self._on_state_change(agent_id, "idle")
 
             # Block this agent until its own audio finishes playing
             await self._interruptible_sleep(duration)
+
+            # Now that audio is done, tell frontend to clear the indicator
+            if self._on_state_change:
+                await self._on_state_change(agent_id, "idle")
         except Exception as e:
             print(f"[mux] TTS error: {e}")
             self._spotlight = None
@@ -164,25 +183,27 @@ class Multiplexer:
         if self._on_clear_audio:
             await self._on_clear_audio()
 
-    async def broadcast_user_message(self, message):
-        """Broadcast user's message to all agents and resume."""
-        print(f"[mux] USER: {message}")
-        self.conversation.append({
-            "agent_id": "user",
-            "message": message,
-            "timestamp": time.time(),
-        })
-        self._pending_user_messages.append(message)
-        if self._on_message:
-            self._on_message("user", message)
+    def resume(self):
+        """Resume the pipeline (called when user stops recording)."""
         self._resume_event.set()
         print(f"[mux] Pipeline resumed")
 
-    def drain_user_messages(self):
-        """Drain buffered user messages (called by extractor)."""
-        msgs = list(self._pending_user_messages)
-        self._pending_user_messages.clear()
-        return msgs
+    def broadcast_user_audio(self, audio_bytes, mime_type):
+        """Store user audio for agents and extractor to pick up."""
+        print(f"[mux] USER AUDIO: {len(audio_bytes)} bytes ({mime_type})")
+        self.conversation.append({
+            "agent_id": "user",
+            "audio_bytes": audio_bytes,
+            "mime_type": mime_type,
+            "timestamp": time.time(),
+        })
+        self._pending_user_audio.append((audio_bytes, mime_type))
+
+    def drain_user_audio(self):
+        """Drain buffered user audio (called by extractor)."""
+        audio = list(self._pending_user_audio)
+        self._pending_user_audio.clear()
+        return audio
 
     async def wait_if_paused(self):
         """Agents call this before each step. Blocks while paused."""

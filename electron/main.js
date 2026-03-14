@@ -258,6 +258,12 @@ ipcMain.on('preempt-start', () => {
   }
 });
 
+ipcMain.on('preempt-end', () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'preempt_end' }));
+  }
+});
+
 ipcMain.on('preempt-audio', (_, audioB64, mimeType) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'preempt_audio', data: audioB64, mimeType }));

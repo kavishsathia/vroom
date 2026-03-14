@@ -297,15 +297,20 @@ class Extractor:
                         )
                     )
 
-            # Inject any user corrections from preemption
+            # Inject any user audio corrections from preemption
             if self.multiplexer:
-                user_msgs = self.multiplexer.drain_user_messages()
-                if user_msgs:
-                    correction = "\n\n[USER CORRECTION]: The user interrupted and gave new instructions while executors were running:\n"
-                    for um in user_msgs:
-                        correction += f"- {um}\n"
-                    correction += "IMPORTANT: The running executors also heard these instructions in real-time and may have already adapted their behavior to follow them. Check the executor results — if an executor already completed the corrected task, do NOT spawn a duplicate. Only spawn new executors if the correction was not addressed by existing ones."
-                    function_responses.append(types.Part(text=correction))
+                user_audio = self.multiplexer.drain_user_audio()
+                if user_audio:
+                    function_responses.append(types.Part(text=(
+                        "[USER CORRECTION]: The user interrupted and spoke while executors were running. "
+                        "Listen to the audio below. IMPORTANT: The running executors also heard this audio "
+                        "in real-time and may have already adapted their behavior. Check the executor results "
+                        "— if an executor already completed the corrected task, do NOT spawn a duplicate."
+                    )))
+                    for audio_bytes, mime_type in user_audio:
+                        function_responses.append(types.Part(
+                            inline_data=types.Blob(data=audio_bytes, mime_type=mime_type)
+                        ))
 
             # Add tool responses to history
             history.append(
