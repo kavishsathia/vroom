@@ -19,6 +19,7 @@ class VroomServer:
             on_audio_chunk=self._on_agent_audio_chunk,
             on_state_change=self._on_agent_state_change,
             on_clear_audio=self._on_clear_audio,
+            on_log=self._on_log,
         )
 
     def _on_agent_message(self, agent_id, message):
@@ -46,6 +47,14 @@ class VroomServer:
     async def _on_clear_audio(self):
         """Called during preempt — tell frontend to stop all audio."""
         await self.ws.send(json.dumps({"type": "clear_audio"}))
+
+    async def _on_log(self, agent_id, message):
+        """Called when an agent writes to the append-only log."""
+        await self.ws.send(json.dumps({
+            "type": "log",
+            "agentId": agent_id,
+            "message": message,
+        }))
 
     def _next_id(self):
         self._request_counter += 1
@@ -85,6 +94,8 @@ class VroomServer:
                     await self.send_status("Processing audio...")
                 elif data["type"] == "preempt_audio":
                     asyncio.create_task(self._handle_preempt_audio(data["data"], data.get("mimeType", "audio/webm")))
+                elif data["type"] == "user_log":
+                    asyncio.create_task(self.multiplexer.append_log("user", data["message"]))
 
         except websockets.exceptions.ConnectionClosed:
             print("[vroom] Extension disconnected")

@@ -11,6 +11,10 @@ const webviewLayer = document.getElementById('webviewLayer');
 const urlBar = document.getElementById('urlBar');
 const logToggle = document.getElementById('logToggle');
 const logPanel = document.getElementById('logPanel');
+const chatSidebar = document.getElementById('chatPanel');
+const chatMessages = document.getElementById('chatMessages');
+const chatInput = document.getElementById('chatInput');
+const chatSendBtn = document.getElementById('chatSendBtn');
 const navBack = document.getElementById('navBack');
 const navForward = document.getElementById('navForward');
 const navRefresh = document.getElementById('navRefresh');
@@ -71,6 +75,37 @@ logToggle.addEventListener('click', () => {
   logResizeHandle.style.display = logPanel.classList.contains('open') ? '' : 'none';
 });
 logResizeHandle.style.display = 'none';
+
+chatSendBtn.addEventListener('click', () => {
+  const text = chatInput.value.trim();
+  if (!text) return;
+  window.vroom.sendLog(text);
+  appendChatMessage('You', text, true);
+  chatInput.value = '';
+});
+
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    chatSendBtn.click();
+  }
+});
+
+
+
+function appendChatMessage(sender, message, isUser) {
+  const msg = document.createElement('div');
+  msg.className = 'chat-msg ' + (isUser ? 'user' : 'agent');
+  const senderEl = document.createElement('div');
+  senderEl.className = 'chat-sender';
+  senderEl.textContent = sender;
+  const textEl = document.createElement('div');
+  textEl.textContent = message;
+  msg.appendChild(senderEl);
+  msg.appendChild(textEl);
+  chatMessages.appendChild(msg);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
 
 // --- Sidebar resize ---
 sidebarResizeHandle.addEventListener('mousedown', (e) => {
@@ -328,6 +363,7 @@ taskInput.addEventListener('input', () => {
 function switchToTab(tabId) {
   activeTabId = tabId;
   grid.classList.add('hidden');
+  chatSidebar.classList.add('hidden');
   for (const id in tabs) {
     const isTarget = (id == tabId); // loose comparison for string/int
     tabs[id].sidebarTab.classList.toggle('focused', isTarget);
@@ -342,6 +378,7 @@ function switchToTab(tabId) {
 function switchToGrid() {
   activeTabId = null;
   grid.classList.remove('hidden');
+  chatSidebar.classList.remove('hidden');
   for (const id in tabs) {
     tabs[id].sidebarTab.classList.remove('focused');
     if (tabs[id].webview) {
@@ -521,6 +558,11 @@ window.vroom.onMessage((msg) => {
   } else if (msg.type === 'clear_audio') {
     stopAllAudio();
 
+  } else if (msg.type === 'log') {
+    if (msg.agentId !== 'user') {
+      appendChatMessage(msg.agentId, msg.message, false);
+    }
+
   } else if (msg.type === 'preempt_transcript') {
     log('You said: ' + msg.text, true);
 
@@ -599,6 +641,7 @@ function closeTaskGroup(groupData) {
 function createTabCard(tabId, task) {
   if (tabs[tabId]) return;
   emptyState.style.display = 'none';
+  chatSidebar.classList.remove('hidden');
 
   // Sidebar tab
   const sidebarTab = document.createElement('button');
@@ -722,6 +765,7 @@ function createTabCard(tabId, task) {
 
 function createGridCard(tabId, task) {
   emptyState.style.display = 'none';
+  chatSidebar.classList.remove('hidden');
 
   const card = document.createElement('div');
   card.className = 'tab-card active';
@@ -1054,6 +1098,7 @@ function relativeTime(ts) {
 
 function showHomePage() {
   emptyState.style.display = '';
+  chatSidebar.classList.add('hidden');
   renderHomePage();
 }
 

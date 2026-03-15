@@ -24,9 +24,11 @@ AGENT_POOL = [
 
 
 class Multiplexer:
-    def __init__(self, on_message=None, on_audio_chunk=None, on_state_change=None, on_clear_audio=None):
+    def __init__(self, on_message=None, on_audio_chunk=None, on_state_change=None, on_clear_audio=None, on_log=None):
         self.conversation = []  # [{agent_id, message, timestamp}]
         self.read_pointers = {}  # agent_id -> int
+        self.aol = []  # [{agent_id, message, timestamp}]
+        self.aol_read_pointers = {}  # agent_id -> int
         self._spotlight = None  # agent_id currently generating TTS
         self._audio_free_at = 0  # monotonic time when current audio finishes
         self._on_message = on_message  # callback(agent_id, message)
@@ -35,6 +37,7 @@ class Multiplexer:
         # async callback(agent_id, state)
         self._on_state_change = on_state_change
         self._on_clear_audio = on_clear_audio  # async callback()
+        self._on_log = on_log  # async callback(agent_id, message)
         self._agent_voices = {}  # agent_id -> voice name
         self._agent_pool_index = 0
         self._client = genai.Client()
@@ -56,11 +59,13 @@ class Multiplexer:
 
     def register(self, agent_id, voice=None):
         self.read_pointers[agent_id] = len(self.conversation)
+        self.aol_read_pointers[agent_id] = len(self.aol)
         if voice:
             self._agent_voices[agent_id] = voice
 
     def unregister(self, agent_id):
         self.read_pointers.pop(agent_id, None)
+        self.aol_read_pointers.pop(agent_id, None)
 
     def has_unread(self, agent_id):
         """Check if there are unread messages/audio for an agent (without consuming)."""
@@ -89,6 +94,23 @@ class Multiplexer:
             "unread_messages": messages,
             "user_audio": audio_parts,
         }
+
+    def get_log_context(self, agent_id):
+        """Get unread log entries for an agent."""
+        pointer = self.aol_read_pointers.get(agent_id, 0)
+        unread = self.aol[pointer:]
+        self.aol_read_pointers[agent_id] = len(self.aol)
+        return [{"agent": m["agent_id"], "message": m["message"]} for m in unread]
+
+    async def append_log(self, agent_id, message):
+        """Append a log entry and notify the frontend."""
+        self.aol.append({
+            "agent_id": agent_id,
+            "message": message,
+            "timestamp": time.time(),
+        })
+        if self._on_log:
+            await self._on_log(agent_id, message)
 
     async def try_speak(self, agent_id, message):
         """Try to claim spotlight and speak with streaming TTS.
@@ -323,3 +345,5 @@ class Multiplexer:
         self._spotlight = None
         self._resume_event.set()
         self._agent_pool_index = 0
+        self.aol.clear()
+        self.aol_read_pointers.clear()

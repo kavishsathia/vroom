@@ -77,30 +77,31 @@ function connectWebSocket() {
         const dbg = entry.webContents.debugger;
 
         if (data.action === 'click') {
-          await dbg.sendCommand('Input.dispatchMouseEvent', {
-            type: 'mousePressed', x: data.x, y: data.y, button: 'left', clickCount: 1,
-          });
-          await dbg.sendCommand('Input.dispatchMouseEvent', {
-            type: 'mouseReleased', x: data.x, y: data.y, button: 'left', clickCount: 1,
+          await dbg.sendCommand('Runtime.evaluate', {
+            expression: `(function(){
+              const el = document.elementFromPoint(${data.x}, ${data.y});
+              if (el) {
+                el.dispatchEvent(new MouseEvent('mousedown', {bubbles:true,clientX:${data.x},clientY:${data.y}}));
+                el.dispatchEvent(new MouseEvent('mouseup', {bubbles:true,clientX:${data.x},clientY:${data.y}}));
+                el.dispatchEvent(new MouseEvent('click', {bubbles:true,clientX:${data.x},clientY:${data.y}}));
+                el.focus && el.focus();
+              }
+            })()`,
           });
         } else if (data.action === 'type') {
-          for (const char of data.text) {
-            await dbg.sendCommand('Input.dispatchKeyEvent', {
-              type: 'keyDown', text: char, key: char, unmodifiedText: char,
-            });
-            await dbg.sendCommand('Input.dispatchKeyEvent', {
-              type: 'keyUp', key: char,
-            });
-          }
+          const escaped = data.text.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+          await dbg.sendCommand('Runtime.evaluate', {
+            expression: `document.execCommand('insertText', false, '${escaped}')`,
+          });
         } else if (data.action === 'navigate') {
           await entry.webContents.loadURL(data.url);
         } else if (data.action === 'scroll_down') {
-          await dbg.sendCommand('Input.dispatchMouseEvent', {
-            type: 'mouseWheel', x: 400, y: 400, deltaX: 0, deltaY: 300,
+          await dbg.sendCommand('Runtime.evaluate', {
+            expression: `window.scrollBy(0, 300)`,
           });
         } else if (data.action === 'scroll_up') {
-          await dbg.sendCommand('Input.dispatchMouseEvent', {
-            type: 'mouseWheel', x: 400, y: 400, deltaX: 0, deltaY: -300,
+          await dbg.sendCommand('Runtime.evaluate', {
+            expression: `window.scrollBy(0, -300)`,
           });
         }
         respond({ type: 'action_result', success: true, requestId: rid });
@@ -137,7 +138,7 @@ function connectWebSocket() {
         }
       }
 
-    } else if (data.type === 'audio_chunk' || data.type === 'audio' || data.type === 'speech_state' || data.type === 'status' || data.type === 'complete' || data.type === 'clear_audio' || data.type === 'preempt_transcript') {
+    } else if (data.type === 'audio_chunk' || data.type === 'audio' || data.type === 'speech_state' || data.type === 'status' || data.type === 'complete' || data.type === 'clear_audio' || data.type === 'preempt_transcript' || data.type === 'log') {
       toRenderer(data);
     }
   });
@@ -267,6 +268,18 @@ ipcMain.on('preempt-end', () => {
 ipcMain.on('preempt-audio', (_, audioB64, mimeType) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'preempt_audio', data: audioB64, mimeType }));
+  }
+});
+
+ipcMain.on('focus-renderer', () => {
+  if (win && !win.isDestroyed()) {
+    win.webContents.focus();
+  }
+});
+
+ipcMain.on('user-log', (_, message) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'user_log', message }));
   }
 });
 

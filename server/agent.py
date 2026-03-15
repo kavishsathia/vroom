@@ -18,6 +18,7 @@ Analyze the screenshot and respond with a single JSON action:
 - {"action": "scroll", "direction": "up|down"} — scroll the page
 - {"action": "wait"} — do nothing and wait for messages from other agents. Use this when you are waiting for another agent to act before you can proceed.
 - {"action": "speak", "message": "<string>"} — say something to the user. Keep it to 1 sentence.
+- {"action": "log", "message": "<string>"} — write to the shared chat log (visible to all agents and the user). Use this for structured data, URLs, numbers, comparisons — anything better read than heard. No audio is produced. This is an informal chat — feel free to be friendly, crack jokes, react to what other agents say, or just vibe. It's a group chat, not a formal report.
 - {"action": "done", "summary": "<string>"} — task is complete
 
 Speech system:
@@ -107,6 +108,11 @@ class Agent:
                     text += "\n\nRecent messages from other agents:"
                     for msg in ctx["unread_messages"]:
                         text += f"\n- [{msg['agent']}]: {msg['message']}"
+                log_entries = self.multiplexer.get_log_context(self.agent_id)
+                if log_entries:
+                    text += "\n\nNew log entries:"
+                    for entry in log_entries:
+                        text += f"\n- [{entry['agent']}]: {entry['message']}"
                 if ctx["user_audio"]:
                     text += "\n\n[USER INSTRUCTION]: The user has spoken. Listen to the audio below and follow the instruction if it is relevant to your current task."
                     for audio_bytes, mime_type in ctx["user_audio"]:
@@ -157,6 +163,14 @@ class Agent:
 
             if "action" not in action:
                 print(f"[agent:{self.tab_id}] Missing 'action' key: {response_text}")
+                continue
+
+            # Handle log
+            if action["action"] == "log":
+                if self.multiplexer:
+                    message = action.get("message", "")
+                    await self.multiplexer.append_log(self.agent_id, message)
+                    print(f"[agent:{self.tab_id}] Logged: {message}")
                 continue
 
             # Handle speak
