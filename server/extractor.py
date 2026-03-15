@@ -323,29 +323,33 @@ class Extractor:
     def _spawn(self, subtask):
         self._executor_counter += 1
         executor_id = f"exec_{self._executor_counter}"
+        name, voice = self.multiplexer.next_agent() if self.multiplexer else (executor_id, None)
 
         async def _run_executor():
             tab_ids = await self.server.open_tabs(1, "about:blank", subtask)
             tab_id = tab_ids[0]
             try:
-                agent = Agent(self.server, tab_id, multiplexer=self.multiplexer, agent_id=executor_id)
+                agent = Agent(self.server, tab_id, multiplexer=self.multiplexer,
+                              agent_id=executor_id, name=name, voice=voice)
                 result = await agent.run(subtask)
                 self._results[executor_id] = result
             except Exception as e:
                 self._results[executor_id] = f"Error: {e}"
 
         self._running[executor_id] = asyncio.create_task(_run_executor())
-        print(f"[extractor] Spawned {executor_id}: {subtask}")
+        print(f"[extractor] Spawned {executor_id} ({name}): {subtask}")
         return executor_id
 
     def _spawn_on_tab(self, subtask, tab_id):
         """Spawn an executor on an existing tab — no new tab is opened or closed."""
         self._executor_counter += 1
         executor_id = f"exec_{self._executor_counter}"
+        name, voice = self.multiplexer.next_agent() if self.multiplexer else (executor_id, None)
 
         async def _run_executor():
             try:
-                agent = Agent(self.server, tab_id, multiplexer=self.multiplexer, agent_id=executor_id)
+                agent = Agent(self.server, tab_id, multiplexer=self.multiplexer,
+                              agent_id=executor_id, name=name, voice=voice)
                 result = await agent.run(subtask)
                 self._results[executor_id] = result
             except Exception as e:
@@ -353,7 +357,7 @@ class Extractor:
             # Note: we do NOT close the tab — it was pre-existing
 
         self._running[executor_id] = asyncio.create_task(_run_executor())
-        print(f"[extractor] Spawned {executor_id} on existing tab {tab_id}: {subtask}")
+        print(f"[extractor] Spawned {executor_id} ({name}) on existing tab {tab_id}: {subtask}")
         return executor_id
 
     async def _wait_for_results(self):

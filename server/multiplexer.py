@@ -36,10 +36,9 @@ class Multiplexer:
         self._on_state_change = on_state_change
         self._on_clear_audio = on_clear_audio  # async callback()
         self._agent_voices = {}  # agent_id -> voice name
-        self._current_voice = None  # voice of the current Live session
         self._agent_pool_index = 0
         self._client = genai.Client()
-        self._live_session = None
+        self._voice_sessions = {}  # voice -> {session, ctx}
         self._live_lock = asyncio.Lock()
         self._resume_event = asyncio.Event()
         self._resume_event.set()  # starts unpaused
@@ -146,7 +145,8 @@ class Multiplexer:
                 total_bytes = 0
                 chunk_count = 0
                 stream_start = time.monotonic()
-                async for chunk_bytes in self._stream_tts(message):
+                voice = self._agent_voices.get(agent_id, "Kore")
+                async for chunk_bytes in self._stream_tts(message, voice=voice):
                     chunk_count += 1
                     if chunk_count == 1:
                         ttfb = (time.monotonic() - stream_start) * 1000
@@ -195,43 +195,52 @@ class Multiplexer:
 
         return True, None
 
-    async def _reset_live_session(self):
-        """Close the Live API session to discard any buffered audio."""
-        if self._live_session:
-            try:
-                await self._live_ctx.__aexit__(None, None, None)
-            except Exception:
-                pass
-            self._live_session = None
-            self._live_ctx = None
-            print("[mux] Live session reset (preempt cleanup)")
+    async def _reset_live_session(self, voice=None):
+        """Close Live API session(s). If voice given, only that one; otherwise all."""
+        if voice:
+            entry = self._voice_sessions.pop(voice, None)
+            if entry:
+                try:
+                    await entry["ctx"].__aexit__(None, None, None)
+                except Exception:
+                    pass
+                print(f"[mux] Live session reset for voice={voice}")
+        else:
+            for _, entry in list(self._voice_sessions.items()):
+                try:
+                    await entry["ctx"].__aexit__(None, None, None)
+                except Exception:
+                    pass
+            self._voice_sessions.clear()
+            print("[mux] All Live sessions reset")
 
-    async def _get_live_session(self):
-        """Get or create a persistent Live API session for TTS."""
-        if self._live_session is None:
+    async def _get_live_session(self, voice="Kore"):
+        """Get or create a persistent Live API session for a specific voice."""
+        if voice not in self._voice_sessions:
             config = {
                 "response_modalities": ["AUDIO"],
                 "system_instruction": "You are a text-to-speech engine. Your ONLY job is to speak the exact text the user provides. Do not paraphrase, summarize, comment on, or add anything. Just say the words exactly as given, in a cheerful tone.",
                 "speech_config": {
                     "voice_config": {
-                        "prebuilt_voice_config": {"voice_name": self._voice}
+                        "prebuilt_voice_config": {"voice_name": voice}
                     },
                 },
             }
-            self._live_ctx = self._client.aio.live.connect(
+            ctx = self._client.aio.live.connect(
                 model="gemini-2.5-flash-native-audio-preview-12-2025",
                 config=config,
             )
-            self._live_session = await self._live_ctx.__aenter__()
-            print(f"[mux] Live API session created (voice={self._voice})")
-        return self._live_session
+            session = await ctx.__aenter__()
+            self._voice_sessions[voice] = {"session": session, "ctx": ctx}
+            print(f"[mux] Live API session created (voice={voice})")
+        return self._voice_sessions[voice]["session"]
 
-    async def _stream_tts(self, text, retries=3):
+    async def _stream_tts(self, text, voice="Kore", retries=3):
         """Stream TTS audio chunks via Live API."""
         for attempt in range(retries):
             try:
                 async with self._live_lock:
-                    session = await self._get_live_session()
+                    session = await self._get_live_session(voice=voice)
                     await session.send_client_content(
                         turns=types.Content(
                             role="user",
@@ -255,13 +264,7 @@ class Multiplexer:
             except Exception as e:
                 print(
                     f"[mux] Live TTS attempt {attempt + 1}/{retries} failed: {e}")
-                if self._live_ctx:
-                    try:
-                        await self._live_ctx.__aexit__(None, None, None)
-                    except Exception:
-                        pass
-                self._live_session = None
-                self._live_ctx = None
+                await self._reset_live_session(voice=voice)
                 if attempt < retries - 1:
                     await asyncio.sleep(1)
                 else:
@@ -319,3 +322,4 @@ class Multiplexer:
     def stop(self):
         self._spotlight = None
         self._resume_event.set()
+        self._agent_pool_index = 0

@@ -49,20 +49,22 @@ Rules:
 
 
 class Agent:
-    def __init__(self, server, tab_id, multiplexer=None, agent_id=None):
+    def __init__(self, server, tab_id, multiplexer=None, agent_id=None, name=None, voice=None):
         self.server = server
         self.tab_id = tab_id
         self.client = genai.Client()
         self.multiplexer = multiplexer
         self.agent_id = agent_id or f"tab_{tab_id}"
+        self.name = name or self.agent_id
+        self.voice = voice
 
     async def run(self, task, max_steps=100):
         history = []
 
         if self.multiplexer:
-            self.multiplexer.register(self.agent_id)
+            self.multiplexer.register(self.agent_id, voice=self.voice)
 
-        await self.server.send_status(f"[Tab {self.tab_id}] Starting: {task}")
+        await self.server.send_status(f"[{self.name}] Starting: {task}")
 
         try:
             return await self._run_loop(task, history, max_steps)
@@ -132,7 +134,7 @@ class Agent:
                 model="gemini-3-flash-preview",
                 contents=history,
                 config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
+                    system_instruction=SYSTEM_PROMPT + f"\n\nYour name is {self.name}.",
                     response_mime_type="application/json",
                 ),
             )
