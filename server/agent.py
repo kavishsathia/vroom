@@ -81,7 +81,7 @@ class Agent:
     async def _run_loop(self, task, history, max_steps):
         for step in range(max_steps):
             if self.multiplexer:
-                await self.multiplexer.wait_if_paused()
+                await self.multiplexer.wait_if_paused(self.agent_id)
             import time as _time
             _step_start = _time.monotonic()
             print(f"[agent:{self.tab_id}] Step {step + 1}/{max_steps} for: {task}")
@@ -128,6 +128,20 @@ class Agent:
                         extra_parts.append(types.Part(
                             inline_data=types.Blob(data=audio_bytes, mime_type=mime_type)
                         ))
+                if ctx.get("visual_preempt"):
+                    vp = ctx["visual_preempt"]
+                    text += f"\n\n[USER TOOK MANUAL CONTROL]: The user paused you and manually interacted with the browser. "
+                    text += f"They performed {len(vp)} click(s). Screenshots after each click are attached below. "
+                    text += "Continue from the current page state — the user may have navigated, filled forms, or changed the page."
+                    for i, interaction in enumerate(vp):
+                        text += f"\n- Click {i+1} at viewport position ({interaction['x']}, {interaction['y']})"
+                        if interaction.get("screenshot"):
+                            extra_parts.append(types.Part(
+                                inline_data=types.Blob(
+                                    data=base64.b64decode(interaction["screenshot"]),
+                                    mime_type="image/jpeg"
+                                )
+                            ))
 
             history.append(
                 types.Content(

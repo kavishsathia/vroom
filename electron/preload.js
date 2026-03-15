@@ -12,5 +12,7 @@ contextBridge.exposeInMainWorld('vroom', {
   focusRenderer: () => ipcRenderer.send('focus-renderer'),
   pauseAgents: () => ipcRenderer.send('pause-agents'),
   resumeAgents: () => ipcRenderer.send('resume-agents'),
+  visualPreemptStart: (tabId, agentId) => ipcRenderer.send('visual-preempt-start', tabId, agentId),
+  visualPreemptEnd: (tabId, agentId, interactions) => ipcRenderer.send('visual-preempt-end', tabId, agentId, interactions),
   onMessage: (callback) => ipcRenderer.on('message', (_, data) => callback(data)),
 });

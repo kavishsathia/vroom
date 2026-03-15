@@ -50,6 +50,9 @@ class Multiplexer:
         self._stream_task = None  # task running try_speak, cancelled on preempt
         # [(audio_bytes, mime_type)] buffered for extractor
         self._pending_user_audio = []
+        # Visual preempt: per-agent blocking
+        self._agent_blocked = {}  # agent_id -> asyncio.Event (clear=blocked)
+        self._visual_preempt_data = {}  # agent_id -> list of interactions
 
     def next_agent(self):
         """Get the next agent name/voice from the pool."""
@@ -90,9 +93,11 @@ class Multiplexer:
             elif "message" in m:
                 messages.append(
                     {"agent": m["agent_id"], "message": m["message"]})
+        visual_preempt = self._visual_preempt_data.pop(agent_id, None)
         return {
             "unread_messages": messages,
             "user_audio": audio_parts,
+            "visual_preempt": visual_preempt,
         }
 
     def get_log_context(self, agent_id):
@@ -342,9 +347,26 @@ class Multiplexer:
         self._pending_user_audio.clear()
         return audio
 
-    async def wait_if_paused(self):
-        """Agents call this before each step. Blocks while paused."""
+    async def wait_if_paused(self, agent_id=None):
+        """Agents call this before each step. Blocks while paused or visually preempted."""
         await self._resume_event.wait()
+        if agent_id and agent_id in self._agent_blocked:
+            await self._agent_blocked[agent_id].wait()
+
+    def visual_preempt(self, agent_id):
+        """Block a specific agent for visual preemption."""
+        event = asyncio.Event()
+        # Event starts clear (blocked)
+        self._agent_blocked[agent_id] = event
+        print(f"[mux] Visual preempt: {agent_id} blocked")
+
+    def visual_preempt_end(self, agent_id, interactions):
+        """Unblock agent and store visual preempt data for it to consume."""
+        self._visual_preempt_data[agent_id] = interactions
+        event = self._agent_blocked.pop(agent_id, None)
+        if event:
+            event.set()
+        print(f"[mux] Visual preempt: {agent_id} unblocked with {len(interactions)} interactions")
 
     def stop(self):
         self._spotlight = None

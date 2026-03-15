@@ -21,6 +21,7 @@ const navRefresh = document.getElementById('navRefresh');
 const themeToggle = document.getElementById('themeToggle');
 
 const pauseBtn = document.getElementById('pauseBtn');
+const takeControlBtn = document.getElementById('takeControlBtn');
 const tabChat = document.getElementById('tabChat');
 const tabContracts = document.getElementById('tabContracts');
 const panelChat = document.getElementById('panelChat');
@@ -113,6 +114,120 @@ pauseBtn.addEventListener('click', () => {
     pauseBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
   }
 });
+
+// --- Visual preempt ---
+let visualPreemptActive = false;
+let visualPreemptTabId = null;
+let visualPreemptAgentId = null;
+let visualPreemptInteractions = [];
+let visualPreemptConsoleHandler = null;
+
+function updateTakeControlBtn() {
+  if (activeTabId !== null) {
+    let hasAgent = false;
+    for (const [aid, tid] of Object.entries(agentTabs)) {
+      if (tid == activeTabId) { hasAgent = true; break; }
+    }
+    if (hasAgent) {
+      takeControlBtn.classList.remove('hidden');
+      return;
+    }
+  }
+  takeControlBtn.classList.add('hidden');
+}
+
+takeControlBtn.addEventListener('click', async () => {
+  if (!visualPreemptActive) {
+    // Start visual preempt
+    const tabId = activeTabId;
+    let agentId = null;
+    for (const [aid, tid] of Object.entries(agentTabs)) {
+      if (tid == tabId) { agentId = aid; break; }
+    }
+    if (!agentId) return;
+
+    visualPreemptActive = true;
+    visualPreemptTabId = tabId;
+    visualPreemptAgentId = agentId;
+    visualPreemptInteractions = [];
+
+    window.vroom.visualPreemptStart(tabId, agentId);
+
+    // Inject click listener into webview
+    const entry = tabs[tabId];
+    if (entry && entry.webview) {
+      entry.webview.executeJavaScript(`
+        window.__vroomClickCapture = function(e) {
+          console.log('__vroom_click__' + JSON.stringify({x: e.clientX, y: e.clientY}));
+        };
+        document.addEventListener('click', window.__vroomClickCapture, true);
+      `);
+
+      visualPreemptConsoleHandler = (e) => {
+        if (e.message && e.message.startsWith('__vroom_click__')) {
+          const data = JSON.parse(e.message.replace('__vroom_click__', ''));
+          // Capture screenshot after click
+          setTimeout(() => {
+            window.vroom.captureTab(tabId).then(screenshot => {
+              if (screenshot) {
+                visualPreemptInteractions.push({
+                  type: 'click',
+                  x: data.x,
+                  y: data.y,
+                  screenshot
+                });
+                log(`Visual preempt: click at (${data.x}, ${data.y}) — ${visualPreemptInteractions.length} interaction(s)`, true);
+              }
+            });
+          }, 300); // small delay to let page update after click
+        }
+      };
+      entry.webview.addEventListener('console-message', visualPreemptConsoleHandler);
+    }
+
+    // Update button to "Continue"
+    takeControlBtn.classList.add('active');
+    takeControlBtn.title = 'Give back control';
+    takeControlBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>';
+    log('Visual preempt: took control', true);
+  } else {
+    endVisualPreempt();
+  }
+});
+
+function endVisualPreempt() {
+  if (!visualPreemptActive) return;
+
+  // Send interactions to server
+  window.vroom.visualPreemptEnd(visualPreemptTabId, visualPreemptAgentId, visualPreemptInteractions);
+
+  // Remove click listener from webview
+  const entry = tabs[visualPreemptTabId];
+  if (entry && entry.webview) {
+    entry.webview.executeJavaScript(`
+      if (window.__vroomClickCapture) {
+        document.removeEventListener('click', window.__vroomClickCapture, true);
+        delete window.__vroomClickCapture;
+      }
+    `);
+    if (visualPreemptConsoleHandler) {
+      entry.webview.removeEventListener('console-message', visualPreemptConsoleHandler);
+    }
+  }
+
+  log(`Visual preempt: gave back control (${visualPreemptInteractions.length} interaction(s))`, true);
+
+  visualPreemptActive = false;
+  visualPreemptTabId = null;
+  visualPreemptAgentId = null;
+  visualPreemptInteractions = [];
+  visualPreemptConsoleHandler = null;
+
+  // Reset button
+  takeControlBtn.classList.remove('active');
+  takeControlBtn.title = 'Take control';
+  takeControlBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M4 2l12 10h-6l4 8-3 1-4-8-3 3z"/></svg>';
+}
 
 // Panel tab switching
 tabChat.addEventListener('click', () => {
@@ -430,6 +545,7 @@ taskInput.addEventListener('input', () => {
 });
 
 function switchToTab(tabId) {
+  if (visualPreemptActive && visualPreemptTabId != tabId) endVisualPreempt();
   activeTabId = tabId;
   grid.classList.add('hidden');
   chatSidebar.classList.add('hidden');
@@ -443,13 +559,16 @@ function switchToTab(tabId) {
   }
   updateUrlBar();
   updateNavButtons();
+  updateTakeControlBtn();
 }
 
 function switchToGrid() {
+  if (visualPreemptActive) endVisualPreempt();
   activeTabId = null;
   grid.classList.remove('hidden');
   chatSidebar.classList.remove('hidden');
   pauseBtn.classList.remove('hidden');
+  takeControlBtn.classList.add('hidden');
   for (const id in tabs) {
     tabs[id].sidebarTab.classList.remove('focused');
     if (tabs[id].webview) {
@@ -1176,6 +1295,8 @@ function showHomePage() {
   emptyState.style.display = '';
   chatSidebar.classList.add('hidden');
   pauseBtn.classList.add('hidden');
+  takeControlBtn.classList.add('hidden');
+  if (visualPreemptActive) endVisualPreempt();
   agentsPaused = false;
   pauseBtn.classList.remove('active');
   pauseBtn.title = 'Pause agents';

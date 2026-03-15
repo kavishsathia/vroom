@@ -96,6 +96,17 @@ class VroomServer:
                     asyncio.create_task(self._handle_preempt_audio(data["data"], data.get("mimeType", "audio/webm")))
                 elif data["type"] == "user_log":
                     asyncio.create_task(self.multiplexer.append_log("user", data["message"]))
+                elif data["type"] == "visual_preempt_start":
+                    agent_id = data.get("agentId")
+                    if agent_id:
+                        self.multiplexer.visual_preempt(agent_id)
+                        await self.send_status(f"User took control of {agent_id}")
+                elif data["type"] == "visual_preempt_end":
+                    agent_id = data.get("agentId")
+                    interactions = data.get("interactions", [])
+                    if agent_id:
+                        self.multiplexer.visual_preempt_end(agent_id, interactions)
+                        await self.send_status(f"Control returned to {agent_id}")
                 elif data["type"] == "pause":
                     self.multiplexer.pause()
                     await self.send_status("Agents paused")

@@ -289,6 +289,18 @@ ipcMain.on('resume-agents', () => {
   }
 });
 
+ipcMain.on('visual-preempt-start', (_, tabId, agentId) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'visual_preempt_start', tabId, agentId }));
+  }
+});
+
+ipcMain.on('visual-preempt-end', (_, tabId, agentId, interactions) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'visual_preempt_end', tabId, agentId, interactions }));
+  }
+});
+
 ipcMain.on('user-log', (_, message) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'user_log', message }));
