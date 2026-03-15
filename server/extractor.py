@@ -200,7 +200,7 @@ class Extractor:
         self._contracts = {}  # executor_id -> Contract
         self._tab_ids = {}  # executor_id -> tab_id
 
-    async def run(self, task, existing_tabs=None):
+    async def run(self, task, existing_tabs=None, audio=None):
         print(f"[extractor] Starting: {task}")
         await self.server.send_status(f"Extractor starting: {task}")
 
@@ -249,6 +249,14 @@ class Extractor:
                     ))
         else:
             parts.append(types.Part(text=prompt))
+
+        # Include audio instruction if provided
+        if audio:
+            audio_bytes, mime_type = audio
+            parts.append(types.Part(text="The user also provided an audio instruction. Listen to it and follow it:"))
+            parts.append(types.Part(
+                inline_data=types.Blob(data=audio_bytes, mime_type=mime_type)
+            ))
 
         history = [
             types.Content(role="user", parts=parts)

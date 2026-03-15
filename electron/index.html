@@ -649,6 +649,42 @@
       outline-offset: -2px;
     }
 
+    /* Floating grid controls (Zoom-style) */
+    .grid-controls {
+      position: absolute;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+    }
+    .grid-controls.visible { display: flex; }
+    .grid-controls .unmute-btn,
+    .grid-controls .pause-btn {
+      background: none;
+      border: none;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s;
+    }
+    .grid-controls .unmute-btn:hover,
+    .grid-controls .pause-btn:hover { background: var(--sidebar-hover); color: var(--text); }
+    .grid-controls .unmute-btn.active { color: #ea4335; animation: pulse 1.5s ease-in-out infinite; background: rgba(234,67,53,0.1); }
+    .grid-controls .pause-btn.active { color: #f59e0b; background: rgba(245,158,11,0.1); }
+
     .tab-card {
       background: var(--bg);
       overflow: hidden;
@@ -658,6 +694,8 @@
     .tab-card.active { background: var(--card-active); }
     .tab-card.unattached { opacity: 0.7; }
     .tab-card.unattached .tab-status { display: none; }
+    .tab-card.done { opacity: 0.8; }
+    .tab-card.done .tab-status { color: var(--status-done); }
 
     .tab-card .card-header {
       display: flex;
@@ -853,16 +891,6 @@
       gap: 6px;
       padding: 8px 10px;
       border-top: 1px solid var(--border);
-    }
-    .chat-sidebar .chat-input-row .unmute-btn,
-    .chat-sidebar .chat-input-row .pause-btn {
-      flex-shrink: 0;
-      width: 28px;
-      height: 28px;
-      padding: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
     }
     .chat-sidebar .chat-input {
       flex: 1;
@@ -1353,6 +1381,10 @@
             <div class="grid" id="grid">
               <div class="empty-state" id="emptyState"></div>
             </div>
+            <div class="grid-controls" id="gridControls">
+              <button class="unmute-btn" id="unmuteBtn" title="Push to talk"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="2" x2="22" y2="22"/></svg></button>
+              <button class="pause-btn" id="pauseBtn" title="Pause agents"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></button>
+            </div>
           </div>
           <div class="log-resize-handle" id="logResizeHandle"></div>
           <div class="log-panel" id="logPanel">
@@ -1368,8 +1400,6 @@
           <div class="panel-content" id="panelChat">
             <div class="chat-messages" id="chatMessages"></div>
             <div class="chat-input-row">
-              <button class="unmute-btn" id="unmuteBtn" title="Push to talk"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="2" x2="22" y2="22"/></svg></button>
-              <button class="pause-btn hidden" id="pauseBtn" title="Pause agents"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></button>
               <input type="text" class="chat-input" id="chatInput" placeholder="Describe your task..." />
               <button class="chat-send-btn" id="chatSendBtn">Send</button>
             </div>

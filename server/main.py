@@ -112,7 +112,10 @@ class Session:
                 if rid and rid in self._pending:
                     self._pending.pop(rid).set_result(data)
                 elif data["type"] == "task":
-                    asyncio.create_task(self._run_task(data["text"], data.get("existingTabs")))
+                    audio = None
+                    if data.get("audio"):
+                        audio = (base64.b64decode(data["audio"]), data.get("audioMimeType", "audio/webm"))
+                    asyncio.create_task(self._run_task(data["text"], data.get("existingTabs"), audio=audio))
                 elif data["type"] == "preempt_start":
                     await self.multiplexer.preempt()
                     await self.send_status("User is speaking...")
@@ -150,11 +153,11 @@ class Session:
         self.multiplexer.resume()
         await self.send_status("User finished speaking")
 
-    async def _run_task(self, text, existing_tabs=None):
+    async def _run_task(self, text, existing_tabs=None, audio=None):
         try:
             extractor = Extractor(self, pool=self.pool, user_id=self.user_id,
                                   multiplexer=self.multiplexer, skill_store=self.skill_store)
-            await extractor.run(text, existing_tabs=existing_tabs)
+            await extractor.run(text, existing_tabs=existing_tabs, audio=audio)
         except Exception as e:
             import traceback
             traceback.print_exc()

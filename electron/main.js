@@ -515,10 +515,14 @@ ipcMain.handle('capture-tab', async (_, tabId) => {
   }
 });
 
-ipcMain.on('task', (_, text, tabInfo) => {
+ipcMain.on('task', (_, text, tabInfo, audioData) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     const msg = { type: 'task', text };
     if (tabInfo && tabInfo.length > 0) msg.existingTabs = tabInfo;
+    if (audioData) {
+      msg.audio = audioData.data;
+      msg.audioMimeType = audioData.mimeType;
+    }
     ws.send(JSON.stringify(msg));
   }
 });

@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('vroom', {
-  sendTask: (text, tabInfo) => ipcRenderer.send('task', text, tabInfo),
+  sendTask: (text, tabInfo, audioData) => ipcRenderer.send('task', text, tabInfo, audioData),
   captureTab: (tabId) => ipcRenderer.invoke('capture-tab', tabId),
   registerWebview: (tabId, webContentsId, requestId) => ipcRenderer.send('webview-ready', tabId, webContentsId, requestId),
   closeTabs: (tabIds) => ipcRenderer.send('close-tabs', tabIds),

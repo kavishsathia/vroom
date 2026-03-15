@@ -20,6 +20,7 @@ const navRefresh = document.getElementById('navRefresh');
 const themeToggle = document.getElementById('themeToggle');
 
 const pauseBtn = document.getElementById('pauseBtn');
+const gridControls = document.getElementById('gridControls');
 const takeControlBtn = document.getElementById('takeControlBtn');
 const tabChat = document.getElementById('tabChat');
 const tabContracts = document.getElementById('tabContracts');
@@ -54,7 +55,7 @@ grid.addEventListener('drop', (e) => {
   addTabToWorkspace(tabId);
 });
 
-function addTabToWorkspace(tabId) {
+async function addTabToWorkspace(tabId) {
   const entry = tabs[tabId];
   if (!entry) return;
   // Move sidebar tab into task group
@@ -64,6 +65,11 @@ function addTabToWorkspace(tabId) {
   }
   // Create an unattached grid card
   createGridCard(tabId, entry.sidebarTab.querySelector('.tab-title')?.textContent || `Tab ${tabId}`, true);
+  // Capture and show current screenshot
+  const screenshot = await window.vroom.captureTab(tabId);
+  if (screenshot && tabs[tabId] && tabs[tabId].img) {
+    tabs[tabId].img.src = 'data:image/jpeg;base64,' + screenshot;
+  }
 }
 
 function sortGrid() {
@@ -326,6 +332,29 @@ function appendChatMessage(sender, message, isUser) {
   msg.appendChild(textEl);
   chatMessages.appendChild(msg);
   chatMessages.scrollTop = chatMessages.scrollHeight;
+
+  // Store in current task group's chat history
+  if (currentTaskGroup) {
+    currentTaskGroup.chatHistory.push({ sender, message, isUser });
+  }
+}
+
+function loadChatForTaskGroup(taskGroup) {
+  chatMessages.innerHTML = '';
+  if (!taskGroup) return;
+  for (const entry of taskGroup.chatHistory) {
+    const msg = document.createElement('div');
+    msg.className = 'chat-msg ' + (entry.isUser ? 'user' : 'agent');
+    const senderEl = document.createElement('div');
+    senderEl.className = 'chat-sender';
+    senderEl.textContent = entry.sender;
+    const textEl = document.createElement('div');
+    textEl.textContent = entry.message;
+    msg.appendChild(senderEl);
+    msg.appendChild(textEl);
+    chatMessages.appendChild(msg);
+  }
+  chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
 // --- Sidebar resize ---
@@ -519,10 +548,13 @@ newTaskBtn2.addEventListener('click', () => {
   if (audioCtx.state === 'suspended') audioCtx.resume();
 
   createTaskGroup('New Task');
+  // Clear chat and grid for new session
+  chatMessages.innerHTML = '';
+  rebuildGridForTaskGroup(currentTaskGroup);
   switchToGrid();
   emptyState.style.display = 'none';
   chatSidebar.classList.remove('hidden');
-  pauseBtn.classList.remove('hidden');
+  gridControls.classList.add('visible');
 
   workspaceActive = true;
   firstMessageSent = false;
@@ -546,12 +578,31 @@ function switchToTab(tabId) {
   updateTakeControlBtn();
 }
 
+function switchToTaskGroup(taskGroup) {
+  currentTaskGroup = taskGroup;
+  loadChatForTaskGroup(taskGroup);
+  // Rebuild grid to show only this group's tabs
+  rebuildGridForTaskGroup(taskGroup);
+  switchToGrid();
+}
+
+function rebuildGridForTaskGroup(taskGroup) {
+  // Remove all tab-cards from grid (keep emptyState)
+  grid.querySelectorAll('.tab-card').forEach(c => c.remove());
+  if (!taskGroup) return;
+  for (const tabId of taskGroup.tabIds) {
+    if (tabs[tabId] && tabs[tabId].card) {
+      grid.appendChild(tabs[tabId].card);
+    }
+  }
+}
+
 function switchToGrid() {
   if (visualPreemptActive) endVisualPreempt();
   activeTabId = null;
   grid.classList.remove('hidden');
   chatSidebar.classList.remove('hidden');
-  pauseBtn.classList.remove('hidden');
+  gridControls.classList.add('visible');
   takeControlBtn.classList.add('hidden');
   for (const id in tabs) {
     tabs[id].sidebarTab.classList.remove('focused');
@@ -621,14 +672,14 @@ window.vroom.onMessage((msg) => {
         if (tabs[tabId].stepInfo) tabs[tabId].stepInfo.textContent = detail;
         if (tabs[tabId].sidebarStep) tabs[tabId].sidebarStep.textContent = detail;
         if (detail.startsWith('Done:')) {
-          // Remove grid card but keep the tab alive
+          // Mark grid card as done but keep it visible
           if (tabs[tabId].card) {
-            tabs[tabId].card.remove();
-            tabs[tabId].card = null;
-            tabs[tabId].img = null;
-            tabs[tabId].statusEl = null;
-            tabs[tabId].stepInfo = null;
-            tabs[tabId].speechIndicator = null;
+            tabs[tabId].card.classList.add('done');
+            tabs[tabId].card.dataset.attached = 'false';
+            if (tabs[tabId].statusEl) {
+              tabs[tabId].statusEl.textContent = 'Done';
+              tabs[tabId].statusEl.classList.add('done');
+            }
           }
           if (tabs[tabId].sidebarDot) {
             tabs[tabId].sidebarDot.className = 'tab-dot done';
@@ -636,10 +687,6 @@ window.vroom.onMessage((msg) => {
           if (tabs[tabId].sidebarBadge) {
             tabs[tabId].sidebarBadge.textContent = 'Done';
             tabs[tabId].sidebarBadge.classList.add('done');
-          }
-          // Check if grid is now empty of cards
-          if (!grid.querySelector('.tab-card')) {
-            showHomePage();
           }
         }
       }
@@ -659,11 +706,7 @@ window.vroom.onMessage((msg) => {
     }
     if (currentTaskGroup) {
       currentTaskGroup.el.classList.add('complete');
-      currentTaskGroup = null;
-    }
-    // Show home page if no active grid cards
-    if (!grid.querySelector('.tab-card')) {
-      showHomePage();
+      // Keep currentTaskGroup so the grid view stays visible with done cards
     }
 
   } else if (msg.type === 'tab_screenshot') {
@@ -787,10 +830,10 @@ function createTaskGroup(taskText) {
 
   header.addEventListener('click', (e) => {
     if (e.target === closeBtn) return;
-    switchToGrid();
+    switchToTaskGroup(taskGroupData);
   });
 
-  const taskGroupData = { el: group, tabsContainer: null, dot, tabIds: [] };
+  const taskGroupData = { el: group, tabsContainer: null, dot, tabIds: [], chatHistory: [] };
 
   closeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -832,7 +875,7 @@ function createTabCard(tabId, task) {
   if (tabs[tabId]) return;
   emptyState.style.display = 'none';
   chatSidebar.classList.remove('hidden');
-  pauseBtn.classList.remove('hidden');
+  gridControls.classList.add('visible');
 
   // Sidebar tab
   const sidebarTab = document.createElement('button');
@@ -958,7 +1001,7 @@ function createTabCard(tabId, task) {
 function createGridCard(tabId, task, unattached = false) {
   emptyState.style.display = 'none';
   chatSidebar.classList.remove('hidden');
-  pauseBtn.classList.remove('hidden');
+  gridControls.classList.add('visible');
 
   const card = document.createElement('div');
   card.className = 'tab-card active' + (unattached ? ' unattached' : '');
@@ -991,7 +1034,7 @@ function createGridCard(tabId, task, unattached = false) {
 
   const placeholder = document.createElement('div');
   placeholder.className = 'placeholder';
-  placeholder.textContent = 'Waiting for stream...';
+  placeholder.textContent = unattached ? '' : 'Waiting for stream...';
 
   img.addEventListener('load', () => {
     img.style.display = 'block';
@@ -1003,7 +1046,7 @@ function createGridCard(tabId, task, unattached = false) {
 
   const stepInfo = document.createElement('div');
   stepInfo.className = 'step-info';
-  stepInfo.textContent = 'Starting...';
+  stepInfo.textContent = unattached ? '' : 'Starting...';
 
   card.appendChild(header);
   card.appendChild(screenshotContainer);
@@ -1021,27 +1064,29 @@ function createGridCard(tabId, task, unattached = false) {
   entry.speechIndicator = speechIndicator;
 
   // Add sidebar step + badge if missing (user tabs don't have these)
-  if (!entry.sidebarStep) {
-    const sidebarStep = document.createElement('span');
-    sidebarStep.className = 'tab-step';
-    sidebarStep.textContent = 'Starting...';
-    const tabInfo = entry.sidebarTab.querySelector('.tab-info');
-    if (tabInfo) tabInfo.appendChild(sidebarStep);
-    entry.sidebarStep = sidebarStep;
-  }
-  if (!entry.sidebarBadge) {
-    const sidebarBadge = document.createElement('span');
-    sidebarBadge.className = 'tab-badge';
-    sidebarBadge.textContent = 'Running';
-    const closeBtn = entry.sidebarTab.querySelector('.tab-close');
-    entry.sidebarTab.insertBefore(sidebarBadge, closeBtn);
-    entry.sidebarBadge = sidebarBadge;
-  }
+  if (!unattached) {
+    if (!entry.sidebarStep) {
+      const sidebarStep = document.createElement('span');
+      sidebarStep.className = 'tab-step';
+      sidebarStep.textContent = 'Starting...';
+      const tabInfo = entry.sidebarTab.querySelector('.tab-info');
+      if (tabInfo) tabInfo.appendChild(sidebarStep);
+      entry.sidebarStep = sidebarStep;
+    }
+    if (!entry.sidebarBadge) {
+      const sidebarBadge = document.createElement('span');
+      sidebarBadge.className = 'tab-badge';
+      sidebarBadge.textContent = 'Running';
+      const closeBtn = entry.sidebarTab.querySelector('.tab-close');
+      entry.sidebarTab.insertBefore(sidebarBadge, closeBtn);
+      entry.sidebarBadge = sidebarBadge;
+    }
 
-  // Update sidebar dot to running
-  if (entry.sidebarDot) {
-    entry.sidebarDot.className = 'tab-dot running';
-    entry.sidebarDot.style.background = '';
+    // Update sidebar dot to running
+    if (entry.sidebarDot) {
+      entry.sidebarDot.className = 'tab-dot running';
+      entry.sidebarDot.style.background = '';
+    }
   }
 }
 
@@ -1249,11 +1294,33 @@ unmuteBtn.addEventListener('click', async () => {
         const blob = new Blob(recordedChunks, { type: 'audio/webm' });
         const arrayBuffer = await blob.arrayBuffer();
         const b64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-        window.vroom.preemptAudio(b64, 'audio/webm');
-        log('Sending speech to server...', true);
+
+        if (workspaceActive && !firstMessageSent) {
+          // Send audio as the initial task
+          const tabInfo = getWorkspaceTabInfo();
+          const audioData = { data: b64, mimeType: 'audio/webm' };
+          window.vroom.sendTask('(audio instruction)', tabInfo.length > 0 ? tabInfo : undefined, audioData);
+          firstMessageSent = true;
+          appendChatMessage('You', '(voice message)', true);
+          if (currentTaskGroup) {
+            const label = currentTaskGroup.el.querySelector('.task-group-label');
+            if (label) {
+              label.textContent = 'Voice Task';
+              label.title = 'Started with voice instruction';
+            }
+          }
+          chatInput.placeholder = 'Message extractor...';
+          log('Sending voice task...', true);
+        } else {
+          window.vroom.preemptAudio(b64, 'audio/webm');
+          log('Sending speech to server...', true);
+        }
       };
 
-      window.vroom.preemptStart();
+      // Only send preempt_start if agents are already running
+      if (firstMessageSent) {
+        window.vroom.preemptStart();
+      }
       mediaRecorder.start();
       isRecording = true;
       unmuteBtn.classList.add('active');
@@ -1264,7 +1331,9 @@ unmuteBtn.addEventListener('click', async () => {
     }
   } else {
     mediaRecorder.stop();
-    window.vroom.preemptEnd();
+    if (firstMessageSent) {
+      window.vroom.preemptEnd();
+    }
     isRecording = false;
     unmuteBtn.classList.remove('active');
     unmuteBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
@@ -1293,7 +1362,7 @@ function relativeTime(ts) {
 function showHomePage() {
   emptyState.style.display = '';
   chatSidebar.classList.add('hidden');
-  pauseBtn.classList.add('hidden');
+  gridControls.classList.remove('visible');
   takeControlBtn.classList.add('hidden');
   if (visualPreemptActive) endVisualPreempt();
   agentsPaused = false;
