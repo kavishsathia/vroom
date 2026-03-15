@@ -15,4 +15,10 @@ contextBridge.exposeInMainWorld('vroom', {
   visualPreemptStart: (tabId, agentId) => ipcRenderer.send('visual-preempt-start', tabId, agentId),
   visualPreemptEnd: (tabId, agentId, interactions) => ipcRenderer.send('visual-preempt-end', tabId, agentId, interactions),
   onMessage: (callback) => ipcRenderer.on('message', (_, data) => callback(data)),
+
+  // Settings & Auth
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
+  googleLogin: () => ipcRenderer.invoke('google-login'),
+  logout: () => ipcRenderer.invoke('logout'),
 });

@@ -9,6 +9,12 @@ venv/
 # Debug output
 debug/
 
+# Terraform
+*.tfvars
+*.tfstate
+*.tfstate.backup
+.terraform/
+
 # Electron
 electron/node_modules/
 electron/package-lock.json

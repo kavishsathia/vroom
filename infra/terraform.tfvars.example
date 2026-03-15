@@ -1,0 +1,5 @@
+# Copy this to terraform.tfvars and fill in real values
+google_api_key       = "your-gemini-api-key"
+google_client_id     = "your-google-client-id"
+google_client_secret = "your-google-client-secret"
+db_password          = "pick-a-strong-password"

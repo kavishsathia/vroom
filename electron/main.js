@@ -1,5 +1,10 @@
-const { app, BrowserWindow, ipcMain, webContents } = require('electron');
+const { app, BrowserWindow, ipcMain, webContents, shell } = require('electron');
 const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+const fs = require('fs');
+const http = require('http');
+const https = require('https');
+const crypto = require('crypto');
 const WebSocket = require('ws');
 
 app.name = 'Vroom';
@@ -9,6 +14,209 @@ let ws = null;
 const tabs = {}; // tabId -> { webContents }
 let nextTabId = 1;
 const pendingTabRequests = {}; // requestId -> { tabIds, total, ready }
+
+// --- Settings & Auth ---
+
+const MANAGED_URL = 'ws://localhost:8765';
+const MANAGED_GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const MANAGED_GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+
+const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+
+function loadSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+  } catch {
+    return { mode: 'managed', serverUrl: '', auth: null };
+  }
+}
+
+function saveSettings(settings) {
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+}
+
+function getWsUrl() {
+  const settings = loadSettings();
+  const base = settings.mode === 'selfhosted' && settings.serverUrl
+    ? settings.serverUrl
+    : MANAGED_URL;
+  const token = settings.auth?.idToken;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
+function decodeJwtPayload(jwt) {
+  const parts = jwt.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    return JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+  } catch {
+    return null;
+  }
+}
+
+async function refreshIdToken(refreshToken, clientId, clientSecret) {
+  return new Promise((resolve, reject) => {
+    const body = new URLSearchParams({
+      refresh_token: refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: 'refresh_token',
+    }).toString();
+
+    const req = https.request('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) },
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => data += c);
+      res.on('end', () => {
+        try {
+          const tokens = JSON.parse(data);
+          if (tokens.error) return reject(new Error(tokens.error_description || tokens.error));
+          resolve(tokens.id_token);
+        } catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+function exchangeCode(code, port, codeVerifier, clientId, clientSecret) {
+  return new Promise((resolve, reject) => {
+    const body = new URLSearchParams({
+      code,
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: `http://127.0.0.1:${port}/callback`,
+      grant_type: 'authorization_code',
+      code_verifier: codeVerifier,
+    }).toString();
+
+    const req = https.request('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) },
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => data += c);
+      res.on('end', () => {
+        try {
+          const tokens = JSON.parse(data);
+          if (tokens.error) return reject(new Error(tokens.error_description || tokens.error));
+          const payload = decodeJwtPayload(tokens.id_token);
+          resolve({
+            idToken: tokens.id_token,
+            refreshToken: tokens.refresh_token,
+            email: payload?.email,
+            name: payload?.name,
+            picture: payload?.picture,
+            sub: payload?.sub,
+          });
+        } catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+function googleLogin(clientId, clientSecret) {
+  return new Promise((resolve, reject) => {
+    const codeVerifier = crypto.randomBytes(32).toString('base64url');
+    const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+
+    const server = http.createServer(async (req, res) => {
+      const url = new URL(req.url, 'http://localhost');
+      if (url.pathname !== '/callback') { res.writeHead(404); res.end(); return; }
+
+      const code = url.searchParams.get('code');
+      if (!code) { res.writeHead(400); res.end('Missing code'); server.close(); reject(new Error('No code')); return; }
+
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h2>Login successful! You can close this tab.</h2></body></html>');
+      server.close();
+
+      try {
+        const tokens = await exchangeCode(code, port, codeVerifier, clientId, clientSecret);
+        resolve(tokens);
+      } catch (err) { reject(err); }
+    });
+
+    let port;
+    server.listen(0, '127.0.0.1', () => {
+      port = server.address().port;
+      const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: `http://127.0.0.1:${port}/callback`,
+        response_type: 'code',
+        scope: 'openid email profile',
+        code_challenge: codeChallenge,
+        code_challenge_method: 'S256',
+        access_type: 'offline',
+        prompt: 'consent',
+      }).toString();
+      shell.openExternal(authUrl);
+    });
+
+    // Timeout after 5 minutes
+    setTimeout(() => { server.close(); reject(new Error('Login timed out')); }, 300000);
+  });
+}
+
+// --- IPC: Settings & Auth ---
+
+ipcMain.handle('get-settings', () => {
+  const settings = loadSettings();
+  return {
+    mode: settings.mode,
+    serverUrl: settings.serverUrl,
+    auth: settings.auth ? {
+      email: settings.auth.email,
+      name: settings.auth.name,
+      picture: settings.auth.picture,
+    } : null,
+  };
+});
+
+ipcMain.handle('save-settings', (_, { mode, serverUrl }) => {
+  const settings = loadSettings();
+  settings.mode = mode;
+  settings.serverUrl = serverUrl;
+  saveSettings(settings);
+  // Reconnect with updated URL
+  if (ws) ws.close();
+  return { success: true };
+});
+
+ipcMain.handle('google-login', async () => {
+  const settings = loadSettings();
+  const clientId = MANAGED_GOOGLE_CLIENT_ID;
+  const clientSecret = MANAGED_GOOGLE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    return { success: false, error: 'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET env vars are not set.' };
+  }
+  try {
+    const result = await googleLogin(clientId, clientSecret);
+    settings.auth = result;
+    saveSettings(settings);
+    if (ws) ws.close(); // Reconnect with new token
+    return { success: true, auth: { email: result.email, name: result.name, picture: result.picture } };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('logout', () => {
+  const settings = loadSettings();
+  settings.auth = null;
+  saveSettings(settings);
+  if (ws) ws.close();
+  return { success: true };
+});
+
+// --- Window ---
 
 function createWindow() {
   win = new BrowserWindow({
@@ -36,8 +244,28 @@ function createWindow() {
   connectWebSocket();
 }
 
-function connectWebSocket() {
-  ws = new WebSocket('ws://localhost:8765');
+// --- WebSocket ---
+
+async function connectWebSocket() {
+  // Refresh token if expired
+  const settings = loadSettings();
+  if (settings.auth?.idToken && settings.auth?.refreshToken && MANAGED_GOOGLE_CLIENT_ID && MANAGED_GOOGLE_CLIENT_SECRET) {
+    const payload = decodeJwtPayload(settings.auth.idToken);
+    if (payload && payload.exp * 1000 < Date.now() - 60000) {
+      try {
+        const newToken = await refreshIdToken(settings.auth.refreshToken, MANAGED_GOOGLE_CLIENT_ID, MANAGED_GOOGLE_CLIENT_SECRET);
+        settings.auth.idToken = newToken;
+        saveSettings(settings);
+        console.log('[vroom] Refreshed ID token');
+      } catch (err) {
+        console.error('[vroom] Token refresh failed:', err.message);
+      }
+    }
+  }
+
+  const url = getWsUrl();
+  console.log('[vroom] Connecting to', url.replace(/token=[^&]+/, 'token=***'));
+  ws = new WebSocket(url);
 
   ws.on('open', () => {
     console.log('[vroom] Connected to server');
@@ -146,6 +374,7 @@ function connectWebSocket() {
   ws.on('close', () => {
     console.log('[vroom] Disconnected, reconnecting...');
     toRenderer({ type: 'status', message: 'Disconnected, reconnecting...' });
+    toRenderer({ type: 'disconnected' });
     setTimeout(connectWebSocket, 3000);
   });
 
@@ -153,6 +382,8 @@ function connectWebSocket() {
     console.error('[vroom] WebSocket error:', err.message);
   });
 }
+
+// --- IPC: Webview & Tabs ---
 
 ipcMain.on('webview-ready', async (_, tabId, webContentsId, requestId) => {
   try {

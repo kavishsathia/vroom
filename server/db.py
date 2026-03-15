@@ -1,9 +1,10 @@
+import os
 import asyncpg
 
 
 async def create_pool(dsn=None):
     return await asyncpg.create_pool(
-        dsn or "postgresql://localhost/vroom",
+        dsn or os.environ.get("DATABASE_URL", "postgresql://localhost/vroom"),
         min_size=2,
         max_size=10,
     )
@@ -15,6 +16,9 @@ async def ensure_schema(pool):
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
                 token TEXT UNIQUE NOT NULL,
+                email TEXT,
+                name TEXT,
+                picture TEXT,
                 created_at TIMESTAMPTZ DEFAULT now()
             );
 
@@ -63,15 +67,24 @@ async def ensure_schema(pool):
 
 # --- Users ---
 
-async def get_or_create_user(pool, token):
+async def get_or_create_user(pool, token, email=None, name=None, picture=None):
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT id FROM users WHERE token = $1", token
         )
         if row:
+            if email or name or picture:
+                await conn.execute(
+                    """UPDATE users SET email = COALESCE($2, email),
+                       name = COALESCE($3, name), picture = COALESCE($4, picture)
+                       WHERE id = $1""",
+                    row["id"], email, name, picture,
+                )
             return row["id"]
         row = await conn.fetchrow(
-            "INSERT INTO users (token) VALUES ($1) RETURNING id", token
+            """INSERT INTO users (token, email, name, picture)
+               VALUES ($1, $2, $3, $4) RETURNING id""",
+            token, email, name, picture,
         )
         return row["id"]
 

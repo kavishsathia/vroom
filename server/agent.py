@@ -2,6 +2,7 @@ import asyncio
 import base64
 import io
 import os
+import db
 from google import genai
 from google.genai import types
 from PIL import Image, ImageDraw
@@ -275,7 +276,8 @@ TOOLS = [
 
 
 class Agent:
-    def __init__(self, server, tab_id, multiplexer=None, agent_id=None, name=None, voice=None, contract=None, skill_store=None, attached_skills=None):
+    def __init__(self, server, tab_id, multiplexer=None, agent_id=None, name=None, voice=None,
+                 contract=None, skill_store=None, attached_skills=None, pool=None, executor_db_id=None):
         self.server = server
         self.tab_id = tab_id
         self.client = genai.Client()
@@ -286,6 +288,8 @@ class Agent:
         self.contract = contract
         self.skill_store = skill_store
         self.attached_skills = attached_skills or []  # [{name, description}]
+        self.pool = pool
+        self.executor_db_id = executor_db_id
         self.used_skills = set()  # skill names read/added/modified during run
         self._read_skills = set()  # skills that have been read (required before replace)
 
@@ -430,6 +434,8 @@ class Agent:
                     idx = int(args.get("index", 0))
                     status = args.get("status", "done")
                     self.contract.update_commitment(idx, status)
+                    if self.pool and self.executor_db_id:
+                        await db.update_commitment(self.pool, self.executor_db_id, idx, status)
                     print(f"[agent:{self.tab_id}] Commitment {idx} -> {status}")
                     await self.server.send_contract_update(self.contract)
                 history.append(types.Content(role="user", parts=[
@@ -444,6 +450,8 @@ class Agent:
                         idx = int(update.get("index", 0))
                         status = update.get("status", "done")
                         self.contract.update_commitment(idx, status)
+                        if self.pool and self.executor_db_id:
+                            await db.update_commitment(self.pool, self.executor_db_id, idx, status)
                         print(f"[agent:{self.tab_id}] Commitment {idx} -> {status}")
                     await self.server.send_contract_update(self.contract)
                 history.append(types.Content(role="user", parts=[
@@ -466,7 +474,7 @@ class Agent:
             if fn == "read_skill":
                 skill_name = args.get("name", "")
                 if self.skill_store:
-                    text_content = self.skill_store.get_skill(skill_name)
+                    text_content = await self.skill_store.get_skill(skill_name)
                     if text_content:
                         self._read_skills.add(skill_name)
                         self.used_skills.add(skill_name)
@@ -489,7 +497,7 @@ class Agent:
                     else:
                         old_text = args.get("old_text", "")
                         new_text = args.get("new_text", "")
-                        success = self.skill_store.replace_text(skill_name, old_text, new_text)
+                        success = await self.skill_store.replace_text(skill_name, old_text, new_text)
                         if success:
                             self.used_skills.add(skill_name)
                             response_data = {"status": "ok"}
@@ -508,7 +516,7 @@ class Agent:
                 if self.skill_store and skill_name:
                     description = args.get("description", "")
                     skill_text = args.get("text", "")
-                    self.skill_store.add_skill(skill_name, description, skill_text)
+                    await self.skill_store.add_skill(skill_name, description, skill_text)
                     self.used_skills.add(skill_name)
                     response_data = {"status": "ok"}
                     print(f"[agent:{self.tab_id}] Added skill: {skill_name}")

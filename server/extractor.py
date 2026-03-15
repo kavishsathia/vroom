@@ -1,10 +1,10 @@
 import asyncio
 import base64
+import db
 from google import genai
 from google.genai import types
 from agent import Agent
 from contract import Contract
-from skills import SkillStore
 
 
 SYSTEM_PROMPT = """\
@@ -186,11 +186,14 @@ TOOLS = [
 
 
 class Extractor:
-    def __init__(self, server, multiplexer=None, skill_store=None):
+    def __init__(self, server, pool=None, user_id=None, multiplexer=None, skill_store=None):
         self.server = server
+        self.pool = pool
+        self.user_id = user_id
         self.client = genai.Client()
         self.multiplexer = multiplexer
         self.skill_store = skill_store
+        self.task_db_id = None
         self._executor_counter = 0
         self._running = {}  # executor_id -> asyncio.Task
         self._results = {}  # executor_id -> {summary, used_skills}
@@ -201,6 +204,10 @@ class Extractor:
         print(f"[extractor] Starting: {task}")
         await self.server.send_status(f"Extractor starting: {task}")
 
+        # Persist task
+        if self.pool and self.user_id:
+            self.task_db_id = await db.create_task(self.pool, self.user_id, task)
+
         # Register extractor with multiplexer so it can read chat log
         if self.multiplexer:
             self.multiplexer.register("extractor")
@@ -209,7 +216,7 @@ class Extractor:
         prompt = f"Task: {task}"
 
         if self.skill_store:
-            skills_list = self.skill_store.list_skills()
+            skills_list = await self.skill_store.list_skills()
             if skills_list:
                 prompt += "\n\nAvailable skills in the browser library:"
                 for s in skills_list:
@@ -294,7 +301,7 @@ class Extractor:
                     subtask = fc.args.get("task", "")
                     commitments = fc.args.get("commitments", [])
                     skill_names = fc.args.get("skills", [])
-                    executor_id = self._spawn(subtask, commitments, skill_names=skill_names)
+                    executor_id = await self._spawn(subtask, commitments, skill_names=skill_names)
                     await self.server.send_status(f"Spawned executor {executor_id}: {subtask}")
                     response_data = {"executor_id": executor_id, "status": "spawned"}
                     if executor_id in self._tab_ids:
@@ -313,7 +320,7 @@ class Extractor:
                     tab_id = int(fc.args.get("tab_id", 0))
                     commitments = fc.args.get("commitments", [])
                     skill_names = fc.args.get("skills", [])
-                    executor_id = self._spawn_on_tab(subtask, commitments, tab_id, skill_names=skill_names)
+                    executor_id = await self._spawn_on_tab(subtask, commitments, tab_id, skill_names=skill_names)
                     await self.server.send_status(f"Spawned executor {executor_id} on tab {tab_id}: {subtask}")
                     function_responses.append(
                         types.Part(
@@ -347,10 +354,9 @@ class Extractor:
                     if contract_summaries:
                         response_data["contracts"] = "\n\n".join(contract_summaries)
                     if all_used_skills:
-                        # Refresh skills list so extractor sees newly added skills
                         response_data["skills_used_or_added"] = list(all_used_skills)
                         if self.skill_store:
-                            response_data["available_skills"] = self.skill_store.list_skills()
+                            response_data["available_skills"] = await self.skill_store.list_skills()
                     await self.server.send_status(f"Results: {results}")
                     function_responses.append(
                         types.Part(
@@ -370,7 +376,7 @@ class Extractor:
                     if used_skills:
                         response_data["used_skills"] = used_skills
                         if self.skill_store:
-                            response_data["available_skills"] = self.skill_store.list_skills()
+                            response_data["available_skills"] = await self.skill_store.list_skills()
                     if eid in self._tab_ids:
                         response_data["tab_id"] = self._tab_ids[eid]
                     if eid in self._contracts:
@@ -393,7 +399,7 @@ class Extractor:
                     if used_skills:
                         response_data["used_skills"] = used_skills
                         if self.skill_store:
-                            response_data["available_skills"] = self.skill_store.list_skills()
+                            response_data["available_skills"] = await self.skill_store.list_skills()
                     if eid in self._tab_ids:
                         response_data["tab_id"] = self._tab_ids[eid]
                     if eid in self._contracts:
@@ -423,6 +429,8 @@ class Extractor:
                     summary = fc.args.get("summary", "Task completed")
                     print(f"[extractor] Complete: {summary}")
                     await self._cleanup()
+                    if self.pool and self.task_db_id:
+                        await db.update_task_status(self.pool, self.task_db_id, "complete")
                     await self.server.send_complete(summary)
                     done = True
                     function_responses.append(
@@ -467,22 +475,17 @@ class Extractor:
                     self.multiplexer.unregister("extractor")
                 return
 
-    def _resolve_skills(self, skill_names):
+    async def _resolve_skills(self, skill_names):
         """Resolve skill names to [{name, description}] for attaching to an agent."""
         if not self.skill_store or not skill_names:
             return []
-        attached = []
-        for name in skill_names:
-            skill = self.skill_store.skills.get(name)
-            if skill:
-                attached.append({"name": name, "description": skill["description"]})
-        return attached
+        return await self.skill_store.resolve_skills(skill_names)
 
-    def _spawn(self, subtask, commitments=None, skill_names=None):
+    async def _spawn(self, subtask, commitments=None, skill_names=None):
         self._executor_counter += 1
         executor_id = f"exec_{self._executor_counter}"
         name, voice = self.multiplexer.next_agent() if self.multiplexer else (executor_id, None)
-        attached_skills = self._resolve_skills(skill_names)
+        attached_skills = await self._resolve_skills(skill_names)
 
         contract = Contract(
             executor_id, name, subtask,
@@ -490,40 +493,71 @@ class Extractor:
         )
         self._contracts[executor_id] = contract
 
+        # Persist executor and commitments
+        executor_db_id = None
+        if self.pool and self.task_db_id:
+            executor_db_id = await db.create_executor(
+                self.pool, self.task_db_id, executor_id, name, subtask,
+            )
+            if commitments:
+                await db.create_commitments(
+                    self.pool, executor_db_id,
+                    [{"text": c} for c in commitments],
+                )
+
         async def _run_executor():
             tab_ids = await self.server.open_tabs(1, "about:blank", subtask)
             tab_id = tab_ids[0]
             self._tab_ids[executor_id] = tab_id
+            if self.pool and executor_db_id:
+                await db.update_executor(self.pool, executor_db_id, tab_id=tab_id)
             await self._send_contract(contract)
             try:
                 agent = Agent(self.server, tab_id, multiplexer=self.multiplexer,
                               agent_id=executor_id, name=name, voice=voice,
                               contract=contract, skill_store=self.skill_store,
-                              attached_skills=attached_skills)
+                              attached_skills=attached_skills,
+                              pool=self.pool, executor_db_id=executor_db_id)
                 result = await agent.run(subtask)
                 self._results[executor_id] = result
+                if self.pool and executor_db_id:
+                    summary = result["summary"] if isinstance(result, dict) else str(result)
+                    await db.update_executor(self.pool, executor_db_id, status="complete", summary=summary)
             except Exception as e:
                 self._results[executor_id] = f"Error: {e}"
+                if self.pool and executor_db_id:
+                    await db.update_executor(self.pool, executor_db_id, status="error", summary=str(e))
 
         self._running[executor_id] = asyncio.create_task(_run_executor())
         print(f"[extractor] Spawned {executor_id} ({name}): {subtask}" +
               (f" with skills: {skill_names}" if skill_names else ""))
         return executor_id
 
-    def _spawn_on_tab(self, subtask, commitments=None, tab_id=0, skill_names=None):
+    async def _spawn_on_tab(self, subtask, commitments=None, tab_id=0, skill_names=None):
         """Spawn an executor on an existing tab — no new tab is opened or closed."""
         self._executor_counter += 1
         executor_id = f"exec_{self._executor_counter}"
         name, voice = self.multiplexer.next_agent() if self.multiplexer else (executor_id, None)
-        attached_skills = self._resolve_skills(skill_names)
+        attached_skills = await self._resolve_skills(skill_names)
 
         contract = Contract(
             executor_id, name, subtask,
             [{"text": c, "status": "pending"} for c in (commitments or [])],
         )
         self._contracts[executor_id] = contract
-
         self._tab_ids[executor_id] = tab_id
+
+        # Persist executor and commitments
+        executor_db_id = None
+        if self.pool and self.task_db_id:
+            executor_db_id = await db.create_executor(
+                self.pool, self.task_db_id, executor_id, name, subtask, tab_id=tab_id,
+            )
+            if commitments:
+                await db.create_commitments(
+                    self.pool, executor_db_id,
+                    [{"text": c} for c in commitments],
+                )
 
         async def _run_executor():
             await self._send_contract(contract)
@@ -531,12 +565,17 @@ class Extractor:
                 agent = Agent(self.server, tab_id, multiplexer=self.multiplexer,
                               agent_id=executor_id, name=name, voice=voice,
                               contract=contract, skill_store=self.skill_store,
-                              attached_skills=attached_skills)
+                              attached_skills=attached_skills,
+                              pool=self.pool, executor_db_id=executor_db_id)
                 result = await agent.run(subtask)
                 self._results[executor_id] = result
+                if self.pool and executor_db_id:
+                    summary = result["summary"] if isinstance(result, dict) else str(result)
+                    await db.update_executor(self.pool, executor_db_id, status="complete", summary=summary)
             except Exception as e:
                 self._results[executor_id] = f"Error: {e}"
-            # Note: we do NOT close the tab — it was pre-existing
+                if self.pool and executor_db_id:
+                    await db.update_executor(self.pool, executor_db_id, status="error", summary=str(e))
 
         self._running[executor_id] = asyncio.create_task(_run_executor())
         print(f"[extractor] Spawned {executor_id} ({name}) on existing tab {tab_id}: {subtask}" +
@@ -549,7 +588,6 @@ class Extractor:
 
     def _get_tab_info(self):
         """List all tabs with their executor assignments."""
-        # Build reverse map: tab_id -> executor info
         tab_executors = {}
         for eid, tid in self._tab_ids.items():
             is_running = eid in self._running and not self._running[eid].done()
@@ -558,7 +596,6 @@ class Extractor:
                 "executor_id": eid,
                 "status": "running" if is_running else "finished",
             }
-        # Also include tabs with no executor (finished and cleared)
         return list(tab_executors.values())
 
     async def _wait_for_results(self):
