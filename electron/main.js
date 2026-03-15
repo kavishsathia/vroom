@@ -138,7 +138,7 @@ function connectWebSocket() {
         }
       }
 
-    } else if (data.type === 'audio_chunk' || data.type === 'audio' || data.type === 'speech_state' || data.type === 'status' || data.type === 'complete' || data.type === 'clear_audio' || data.type === 'preempt_transcript' || data.type === 'log') {
+    } else if (data.type === 'audio_chunk' || data.type === 'audio' || data.type === 'speech_state' || data.type === 'status' || data.type === 'complete' || data.type === 'clear_audio' || data.type === 'preempt_transcript' || data.type === 'log' || data.type === 'contract_update') {
       toRenderer(data);
     }
   });

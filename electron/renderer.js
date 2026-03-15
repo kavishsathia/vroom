@@ -21,6 +21,11 @@ const navRefresh = document.getElementById('navRefresh');
 const themeToggle = document.getElementById('themeToggle');
 
 const pauseBtn = document.getElementById('pauseBtn');
+const tabChat = document.getElementById('tabChat');
+const tabContracts = document.getElementById('tabContracts');
+const panelChat = document.getElementById('panelChat');
+const panelContracts = document.getElementById('panelContracts');
+const contractsList = document.getElementById('contractsList');
 
 const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
 const logResizeHandle = document.getElementById('logResizeHandle');
@@ -108,6 +113,54 @@ pauseBtn.addEventListener('click', () => {
     pauseBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
   }
 });
+
+// Panel tab switching
+tabChat.addEventListener('click', () => {
+  tabChat.classList.add('active');
+  tabContracts.classList.remove('active');
+  panelChat.classList.remove('hidden');
+  panelContracts.classList.add('hidden');
+});
+tabContracts.addEventListener('click', () => {
+  tabContracts.classList.add('active');
+  tabChat.classList.remove('active');
+  panelContracts.classList.remove('hidden');
+  panelChat.classList.add('hidden');
+});
+
+// Contracts state
+const contracts = {}; // executorId -> contract data
+
+function renderContract(data) {
+  contracts[data.executorId] = data;
+  let card = document.getElementById(`contract-${data.executorId}`);
+  if (!card) {
+    card = document.createElement('div');
+    card.className = 'contract-card';
+    card.id = `contract-${data.executorId}`;
+    contractsList.appendChild(card);
+  }
+
+  let html = `<div class="contract-header">
+    <span class="contract-agent">${data.agentName}</span>
+    <span class="contract-task" title="${data.task}">${data.task}</span>
+  </div>`;
+
+  for (const c of data.commitments) {
+    const icon = c.status === 'done' ? '\u2713' : c.status === 'failed' ? '\u2717' : '\u25cb';
+    html += `<div class="commitment ${c.status}"><span class="c-icon">${icon}</span>${c.text}</div>`;
+  }
+
+  if (data.memos && data.memos.length > 0) {
+    html += '<div class="contract-memos">';
+    for (const m of data.memos) {
+      html += `<div class="memo">${m.text}</div>`;
+    }
+    html += '</div>';
+  }
+
+  card.innerHTML = html;
+}
 
 function appendChatMessage(sender, message, isUser) {
   const msg = document.createElement('div');
@@ -580,6 +633,9 @@ window.vroom.onMessage((msg) => {
     if (msg.agentId !== 'user') {
       appendChatMessage(msg.agentId, msg.message, false);
     }
+
+  } else if (msg.type === 'contract_update') {
+    renderContract(msg);
 
   } else if (msg.type === 'preempt_transcript') {
     log('You said: ' + msg.text, true);
@@ -1124,6 +1180,13 @@ function showHomePage() {
   pauseBtn.classList.remove('active');
   pauseBtn.title = 'Pause agents';
   pauseBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+  contractsList.innerHTML = '';
+  for (const k in contracts) delete contracts[k];
+  // Reset to chat tab
+  tabChat.classList.add('active');
+  tabContracts.classList.remove('active');
+  panelChat.classList.remove('hidden');
+  panelContracts.classList.add('hidden');
   renderHomePage();
 }
 

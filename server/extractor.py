@@ -3,6 +3,7 @@ import base64
 from google import genai
 from google.genai import types
 from agent import Agent
+from contract import Contract
 
 
 SYSTEM_PROMPT = """\
@@ -10,24 +11,36 @@ You are a browser task coordinator. You receive a task from the user and break i
 subtasks that run in parallel on separate browser tabs.
 
 You have these tools:
-- spawn_executor(task): Launch an executor on a new browser tab to perform a specific subtask. \
-  This is async — the executor runs in the background. Be specific in the task description.
-- spawn_executor_on_tab(task, tab_id): Launch an executor on an EXISTING browser tab. \
+- spawn_executor(task, commitments): Launch an executor on a new browser tab to perform a specific subtask. \
+  This is async — the executor runs in the background. Be specific in the task description. \
+  You MUST provide a list of commitments — concrete, verifiable deliverables the executor must complete.
+- spawn_executor_on_tab(task, commitments, tab_id): Launch an executor on an EXISTING browser tab. \
   The tab is already open with content — the executor will see the current page and continue from there. \
   Use this when the user has attached existing tabs to their prompt.
-- wait_for_results(): Wait for ALL running executors to finish and get their summaries.
-- wait_for_one(executor_id): Wait for a specific executor to finish and get its summary.
-- wait_for_any(): Wait for the next executor to finish (whichever completes first) and get its summary.
+- wait_for_results(): Wait for ALL running executors to finish and get their summaries AND updated contracts.
+- wait_for_one(executor_id): Wait for a specific executor to finish and get its summary and contract.
+- wait_for_any(): Wait for the next executor to finish (whichever completes first) and get its summary and contract.
+- list_tabs(): List all open tabs and which executor is running on each. Use this to find available tabs \
+  for reattachment (e.g. if a previous executor failed, you can spawn a new one on the same tab).
 - complete(summary): Signal that the entire task is done and report the final summary to the user.
+
+Contracts:
+Each executor receives a contract with commitments you define. As it works, the executor will:
+- Mark commitments as "done" or "failed"
+- Add memos for anything unexpected (blockers, corrections, extra info)
+When results come back, review the updated contract carefully:
+- If commitments are failed or memos indicate issues, spawn a new executor to retry or fix
+- Use memo content to inform your next steps
 
 Workflow:
 1. Analyze the user's task and break it into independent subtasks
-2. Call spawn_executor for each subtask (they run in parallel)
-3. Call wait_for_results to collect their summaries
-4. Review the results — spawn more executors if needed, or call complete
+2. Call spawn_executor for each subtask with specific commitments (they run in parallel)
+3. Call wait_for_results to collect their summaries and contracts
+4. Review contracts — spawn more executors if needed, or call complete
 
 Rules:
 - Each subtask must be self-contained and specific
+- Commitments must be concrete and verifiable (e.g. "Navigate to google.com", "Click the first search result")
 - You can spawn multiple rounds of executors based on previous results
 - Always call wait_for_results before reviewing what executors did
 - If the task is simple and cannot be parallelized, spawn a single executor
@@ -37,6 +50,11 @@ Rules:
 - Executors can speak to the user. If the user wants something spoken or communicated, \
   include that in the executor's task description (e.g. "then say hello to the user"). \
   Pass speech instructions through faithfully — do not strip them out.
+- When an executor fails, use list_tabs() to find its tab, then spawn_executor_on_tab to retry \
+  on the same tab — the page state is preserved, so the new executor can continue where the old one left off.
+- Results include tab_id so you can easily reattach. Prefer reusing tabs over opening new ones.
+- You will receive chat log updates between tool calls. The user may send messages via chat — \
+  treat these as corrections or instructions and adapt your plan accordingly.
 """
 
 TOOLS = [
@@ -53,9 +71,14 @@ TOOLS = [
                         "task": types.Schema(
                             type="STRING",
                             description="Specific task for the executor to perform",
-                        )
+                        ),
+                        "commitments": types.Schema(
+                            type="ARRAY",
+                            items=types.Schema(type="STRING"),
+                            description="List of concrete, verifiable deliverables the executor must complete",
+                        ),
                     },
-                    required=["task"],
+                    required=["task", "commitments"],
                 ),
             ),
             types.FunctionDeclaration(
@@ -74,8 +97,13 @@ TOOLS = [
                             type="INTEGER",
                             description="The ID of the existing tab to use",
                         ),
+                        "commitments": types.Schema(
+                            type="ARRAY",
+                            items=types.Schema(type="STRING"),
+                            description="List of concrete, verifiable deliverables the executor must complete",
+                        ),
                     },
-                    required=["task", "tab_id"],
+                    required=["task", "tab_id", "commitments"],
                 ),
             ),
             types.FunctionDeclaration(
@@ -110,6 +138,15 @@ TOOLS = [
                 ),
             ),
             types.FunctionDeclaration(
+                name="list_tabs",
+                description="List all open tabs and which executor (if any) is currently running on each one. "
+                "Use this to see available tabs before spawning an executor on an existing tab.",
+                parameters=types.Schema(
+                    type="OBJECT",
+                    properties={},
+                ),
+            ),
+            types.FunctionDeclaration(
                 name="complete",
                 description="Signal that the entire task is done and report the final summary.",
                 parameters=types.Schema(
@@ -136,10 +173,16 @@ class Extractor:
         self._executor_counter = 0
         self._running = {}  # executor_id -> asyncio.Task
         self._results = {}  # executor_id -> summary string
+        self._contracts = {}  # executor_id -> Contract
+        self._tab_ids = {}  # executor_id -> tab_id
 
     async def run(self, task, existing_tabs=None):
         print(f"[extractor] Starting: {task}")
         await self.server.send_status(f"Extractor starting: {task}")
+
+        # Register extractor with multiplexer so it can read chat log
+        if self.multiplexer:
+            self.multiplexer.register("extractor")
 
         parts = []
         prompt = f"Task: {task}"
@@ -220,13 +263,17 @@ class Extractor:
             for fc in function_calls:
                 if fc.name == "spawn_executor":
                     subtask = fc.args.get("task", "")
-                    executor_id = self._spawn(subtask)
+                    commitments = fc.args.get("commitments", [])
+                    executor_id = self._spawn(subtask, commitments)
                     await self.server.send_status(f"Spawned executor {executor_id}: {subtask}")
+                    response_data = {"executor_id": executor_id, "status": "spawned"}
+                    if executor_id in self._tab_ids:
+                        response_data["tab_id"] = self._tab_ids[executor_id]
                     function_responses.append(
                         types.Part(
                             function_response=types.FunctionResponse(
                                 name="spawn_executor",
-                                response={"executor_id": executor_id, "status": "spawned"},
+                                response=response_data,
                             )
                         )
                     )
@@ -234,7 +281,8 @@ class Extractor:
                 elif fc.name == "spawn_executor_on_tab":
                     subtask = fc.args.get("task", "")
                     tab_id = int(fc.args.get("tab_id", 0))
-                    executor_id = self._spawn_on_tab(subtask, tab_id)
+                    commitments = fc.args.get("commitments", [])
+                    executor_id = self._spawn_on_tab(subtask, commitments, tab_id)
                     await self.server.send_status(f"Spawned executor {executor_id} on tab {tab_id}: {subtask}")
                     function_responses.append(
                         types.Part(
@@ -247,37 +295,71 @@ class Extractor:
 
                 elif fc.name == "wait_for_results":
                     results = await self._wait_for_results()
+                    # Build contract summaries and attach tab_ids
+                    contract_summaries = []
+                    results_with_tabs = {}
+                    for eid in results:
+                        entry = {"summary": results[eid]}
+                        if eid in self._tab_ids:
+                            entry["tab_id"] = self._tab_ids[eid]
+                        results_with_tabs[eid] = entry
+                        if eid in self._contracts:
+                            contract_summaries.append(self._contracts[eid].summary_for_extractor())
+                    response_data = {"results": results_with_tabs}
+                    if contract_summaries:
+                        response_data["contracts"] = "\n\n".join(contract_summaries)
                     await self.server.send_status(f"Results: {results}")
                     function_responses.append(
                         types.Part(
                             function_response=types.FunctionResponse(
                                 name="wait_for_results",
-                                response={"results": results},
+                                response=response_data,
                             )
                         )
                     )
 
                 elif fc.name == "wait_for_one":
-                    executor_id = fc.args.get("executor_id", "")
-                    result = await self._wait_for_one(executor_id)
-                    await self.server.send_status(f"Result [{executor_id}]: {result}")
+                    eid = fc.args.get("executor_id", "")
+                    result = await self._wait_for_one(eid)
+                    response_data = {"executor_id": eid, "summary": result}
+                    if eid in self._tab_ids:
+                        response_data["tab_id"] = self._tab_ids[eid]
+                    if eid in self._contracts:
+                        response_data["contract"] = self._contracts[eid].summary_for_extractor()
+                    await self.server.send_status(f"Result [{eid}]: {result}")
                     function_responses.append(
                         types.Part(
                             function_response=types.FunctionResponse(
                                 name="wait_for_one",
-                                response={"executor_id": executor_id, "summary": result},
+                                response=response_data,
                             )
                         )
                     )
 
                 elif fc.name == "wait_for_any":
-                    executor_id, result = await self._wait_for_any()
-                    await self.server.send_status(f"Result [{executor_id}]: {result}")
+                    eid, result = await self._wait_for_any()
+                    response_data = {"executor_id": eid, "summary": result}
+                    if eid in self._tab_ids:
+                        response_data["tab_id"] = self._tab_ids[eid]
+                    if eid in self._contracts:
+                        response_data["contract"] = self._contracts[eid].summary_for_extractor()
+                    await self.server.send_status(f"Result [{eid}]: {result}")
                     function_responses.append(
                         types.Part(
                             function_response=types.FunctionResponse(
                                 name="wait_for_any",
-                                response={"executor_id": executor_id, "summary": result},
+                                response=response_data,
+                            )
+                        )
+                    )
+
+                elif fc.name == "list_tabs":
+                    tab_info = self._get_tab_info()
+                    function_responses.append(
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                name="list_tabs",
+                                response={"tabs": tab_info},
                             )
                         )
                     )
@@ -297,7 +379,7 @@ class Extractor:
                         )
                     )
 
-            # Inject any user audio corrections from preemption
+            # Inject user preemptions (audio + chat log)
             if self.multiplexer:
                 user_audio = self.multiplexer.drain_user_audio()
                 if user_audio:
@@ -312,25 +394,44 @@ class Extractor:
                             inline_data=types.Blob(data=audio_bytes, mime_type=mime_type)
                         ))
 
+                log_entries = self.multiplexer.get_log_context("extractor")
+                if log_entries:
+                    chat_text = "[CHAT UPDATE]: New messages in the shared chat log:\n"
+                    for entry in log_entries:
+                        chat_text += f"- [{entry['agent']}]: {entry['message']}\n"
+                    chat_text += "If the user posted a message, treat it as a correction or instruction. Adapt your plan accordingly."
+                    function_responses.append(types.Part(text=chat_text))
+
             # Add tool responses to history
             history.append(
                 types.Content(role="user", parts=function_responses)
             )
 
             if done:
+                if self.multiplexer:
+                    self.multiplexer.unregister("extractor")
                 return
 
-    def _spawn(self, subtask):
+    def _spawn(self, subtask, commitments=None):
         self._executor_counter += 1
         executor_id = f"exec_{self._executor_counter}"
         name, voice = self.multiplexer.next_agent() if self.multiplexer else (executor_id, None)
 
+        contract = Contract(
+            executor_id, name, subtask,
+            [{"text": c, "status": "pending"} for c in (commitments or [])],
+        )
+        self._contracts[executor_id] = contract
+
         async def _run_executor():
             tab_ids = await self.server.open_tabs(1, "about:blank", subtask)
             tab_id = tab_ids[0]
+            self._tab_ids[executor_id] = tab_id
+            await self._send_contract(contract)
             try:
                 agent = Agent(self.server, tab_id, multiplexer=self.multiplexer,
-                              agent_id=executor_id, name=name, voice=voice)
+                              agent_id=executor_id, name=name, voice=voice,
+                              contract=contract)
                 result = await agent.run(subtask)
                 self._results[executor_id] = result
             except Exception as e:
@@ -340,16 +441,26 @@ class Extractor:
         print(f"[extractor] Spawned {executor_id} ({name}): {subtask}")
         return executor_id
 
-    def _spawn_on_tab(self, subtask, tab_id):
+    def _spawn_on_tab(self, subtask, commitments=None, tab_id=0):
         """Spawn an executor on an existing tab — no new tab is opened or closed."""
         self._executor_counter += 1
         executor_id = f"exec_{self._executor_counter}"
         name, voice = self.multiplexer.next_agent() if self.multiplexer else (executor_id, None)
 
+        contract = Contract(
+            executor_id, name, subtask,
+            [{"text": c, "status": "pending"} for c in (commitments or [])],
+        )
+        self._contracts[executor_id] = contract
+
+        self._tab_ids[executor_id] = tab_id
+
         async def _run_executor():
+            await self._send_contract(contract)
             try:
                 agent = Agent(self.server, tab_id, multiplexer=self.multiplexer,
-                              agent_id=executor_id, name=name, voice=voice)
+                              agent_id=executor_id, name=name, voice=voice,
+                              contract=contract)
                 result = await agent.run(subtask)
                 self._results[executor_id] = result
             except Exception as e:
@@ -359,6 +470,24 @@ class Extractor:
         self._running[executor_id] = asyncio.create_task(_run_executor())
         print(f"[extractor] Spawned {executor_id} ({name}) on existing tab {tab_id}: {subtask}")
         return executor_id
+
+    async def _send_contract(self, contract):
+        """Send contract to frontend for display."""
+        await self.server.send_contract_update(contract)
+
+    def _get_tab_info(self):
+        """List all tabs with their executor assignments."""
+        # Build reverse map: tab_id -> executor info
+        tab_executors = {}
+        for eid, tid in self._tab_ids.items():
+            is_running = eid in self._running and not self._running[eid].done()
+            tab_executors[tid] = {
+                "tab_id": tid,
+                "executor_id": eid,
+                "status": "running" if is_running else "finished",
+            }
+        # Also include tabs with no executor (finished and cleared)
+        return list(tab_executors.values())
 
     async def _wait_for_results(self):
         if not self._running:

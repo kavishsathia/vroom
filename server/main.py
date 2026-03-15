@@ -166,6 +166,12 @@ class VroomServer:
         print(f"[vroom] Complete: {summary}")
         await self.ws.send(json.dumps({"type": "complete", "summary": summary}))
 
+    async def send_contract_update(self, contract):
+        await self.ws.send(json.dumps({
+            "type": "contract_update",
+            **contract.to_dict(),
+        }))
+
 
 async def main():
     server = VroomServer()

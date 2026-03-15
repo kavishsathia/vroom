@@ -19,7 +19,10 @@ Analyze the screenshot and respond with a single JSON action:
 - {"action": "wait"} — do nothing and wait for messages from other agents. Use this when you are waiting for another agent to act before you can proceed.
 - {"action": "speak", "message": "<string>"} — say something to the user. Keep it to 1 sentence.
 - {"action": "log", "message": "<string>"} — write to the shared chat log (visible to all agents and the user). Use this for structured data, URLs, numbers, comparisons — anything better read than heard. No audio is produced. This is an informal chat — feel free to be friendly, crack jokes, react to what other agents say, or just vibe. It's a group chat, not a formal report.
-- {"action": "done", "summary": "<string>"} — task is complete
+- {"action": "update_commitment", "index": <int>, "status": "done"|"failed"} — update a single commitment in your contract.
+- {"action": "update_commitments", "updates": [{"index": <int>, "status": "done"|"failed"}, ...]} — update multiple commitments at once.
+- {"action": "add_memo", "text": "<string>"} — add a memo to your contract. Use this for unexpected findings, blockers, corrections, or extra context the coordinator should know.
+- {"action": "done", "summary": "<string>"} — task is complete. Make sure all commitments are updated before finishing.
 
 Speech system:
 You are one of multiple agents running in parallel. You all share a single audio channel to \
@@ -45,12 +48,13 @@ Rules:
 - Think about the overall task — decide what the next step should be
 - If you are stuck and cannot make progress, respond with done and an error summary
 - If you have confidently completed the task, respond with done immediately — do not keep going
-- Respond with ONLY valid JSON
+- Respond with ONLY a single JSON object — never an array. Use update_commitments to batch multiple commitment updates in one action
+- Do NOT combine different action types — one action per response
 """
 
 
 class Agent:
-    def __init__(self, server, tab_id, multiplexer=None, agent_id=None, name=None, voice=None):
+    def __init__(self, server, tab_id, multiplexer=None, agent_id=None, name=None, voice=None, contract=None):
         self.server = server
         self.tab_id = tab_id
         self.client = genai.Client()
@@ -58,6 +62,7 @@ class Agent:
         self.agent_id = agent_id or f"tab_{tab_id}"
         self.name = name or self.agent_id
         self.voice = voice
+        self.contract = contract
 
     async def run(self, task, max_steps=100):
         history = []
@@ -94,11 +99,15 @@ class Agent:
             _t2 = _time.monotonic()
             print(f"[agent:{self.tab_id}] screenshot: {(_t1-_t0)*1000:.0f}ms, resize: {(_t2-_t1)*1000:.0f}ms")
 
-            text = (
-                f"Task: {task}\n\nThis is the current page. What is the next action?"
-                if step == 0
-                else "Updated page. Continue with the task or respond with done."
-            )
+            if step == 0:
+                text = f"Task: {task}"
+                if self.contract:
+                    text += f"\n\n{self.contract.to_agent_prompt()}"
+                text += "\n\nThis is the current page. What is the next action?"
+            else:
+                text = "Updated page. Continue with the task or respond with done."
+                if self.contract:
+                    text += f"\n\n{self.contract.to_agent_prompt()}"
 
             # Inject multiplexer context
             extra_parts = []
@@ -161,8 +170,36 @@ class Agent:
                 print(f"[agent:{self.tab_id}] JSON parse error: {response_text}")
                 continue
 
-            if "action" not in action:
+            if not isinstance(action, dict) or "action" not in action:
                 print(f"[agent:{self.tab_id}] Missing 'action' key: {response_text}")
+                continue
+
+            # Handle contract actions
+            if action["action"] == "update_commitment":
+                if self.contract:
+                    idx = action.get("index", 0)
+                    status = action.get("status", "done")
+                    self.contract.update_commitment(idx, status)
+                    print(f"[agent:{self.tab_id}] Commitment {idx} -> {status}")
+                    await self.server.send_contract_update(self.contract)
+                continue
+
+            if action["action"] == "update_commitments":
+                if self.contract:
+                    for update in action.get("updates", []):
+                        idx = update.get("index", 0)
+                        status = update.get("status", "done")
+                        self.contract.update_commitment(idx, status)
+                        print(f"[agent:{self.tab_id}] Commitment {idx} -> {status}")
+                    await self.server.send_contract_update(self.contract)
+                continue
+
+            if action["action"] == "add_memo":
+                if self.contract:
+                    memo_text = action.get("text", "")
+                    self.contract.add_memo(memo_text)
+                    print(f"[agent:{self.tab_id}] Memo: {memo_text}")
+                    await self.server.send_contract_update(self.contract)
                 continue
 
             # Handle log
