@@ -210,6 +210,32 @@ class Agent:
                 continue
 
             if action["action"] == "done":
+                # Check for unread user messages/audio before finishing
+                if self.multiplexer:
+                    ctx = self.multiplexer.get_context(self.agent_id)
+                    log_entries = self.multiplexer.get_log_context(self.agent_id)
+                    has_new = ctx["unread_messages"] or ctx["user_audio"] or log_entries
+                    if has_new:
+                        interrupt_text = "Before you finish — new input has arrived. Review and act on it if relevant, otherwise you can done again.\n"
+                        if ctx["unread_messages"]:
+                            interrupt_text += "\nMessages from other agents:"
+                            for msg in ctx["unread_messages"]:
+                                interrupt_text += f"\n- [{msg['agent']}]: {msg['message']}"
+                        if log_entries:
+                            interrupt_text += "\nNew log entries:"
+                            for entry in log_entries:
+                                interrupt_text += f"\n- [{entry['agent']}]: {entry['message']}"
+                        parts = [types.Part(text=interrupt_text)]
+                        if ctx["user_audio"]:
+                            interrupt_text += "\n[USER INSTRUCTION]: The user has spoken. Listen to the audio below."
+                            for audio_bytes, mime_type in ctx["user_audio"]:
+                                parts.append(types.Part(
+                                    inline_data=types.Blob(data=audio_bytes, mime_type=mime_type)
+                                ))
+                        history.append(types.Content(role="user", parts=parts))
+                        print(f"[agent:{self.tab_id}] Intercepted done — new input found, continuing")
+                        continue
+
                 summary = action.get("summary", "Completed")
                 print(f"[agent:{self.tab_id}] Done: {summary}")
                 await self.server.send_status(f"[Tab {self.tab_id}] Done: {summary}")

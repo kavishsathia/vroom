@@ -277,6 +277,18 @@ ipcMain.on('focus-renderer', () => {
   }
 });
 
+ipcMain.on('pause-agents', () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'pause' }));
+  }
+});
+
+ipcMain.on('resume-agents', () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'resume' }));
+  }
+});
+
 ipcMain.on('user-log', (_, message) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'user_log', message }));

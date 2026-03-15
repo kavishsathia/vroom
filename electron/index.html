@@ -195,6 +195,23 @@
       flex-shrink: 0;
       -webkit-app-region: no-drag;
     }
+    .title-bar .pause-btn {
+      background: none;
+      border: none;
+      color: var(--text-tertiary);
+      font-size: 14px;
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 4px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+    }
+    .title-bar .pause-btn:hover { color: var(--text); background: var(--sidebar-hover); }
+    .title-bar .pause-btn.active {
+      color: #f59e0b;
+    }
+    .title-bar .pause-btn.hidden { display: none; }
     .title-bar .unmute-btn {
       background: none;
       border: none;
@@ -1094,6 +1111,7 @@
           <input type="text" id="urlBar" placeholder="Enter URL..." />
         </div>
         <div class="status-area">
+          <button class="pause-btn hidden" id="pauseBtn" title="Pause agents"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></button>
           <button class="unmute-btn" id="unmuteBtn" title="Push to talk"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="2" x2="22" y2="22"/></svg></button>
           <button class="theme-toggle" id="themeToggle" title="Toggle theme">&#x263E;</button>
           <div class="status-dot" id="statusDot"></div>

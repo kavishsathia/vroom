@@ -96,6 +96,12 @@ class VroomServer:
                     asyncio.create_task(self._handle_preempt_audio(data["data"], data.get("mimeType", "audio/webm")))
                 elif data["type"] == "user_log":
                     asyncio.create_task(self.multiplexer.append_log("user", data["message"]))
+                elif data["type"] == "pause":
+                    self.multiplexer.pause()
+                    await self.send_status("Agents paused")
+                elif data["type"] == "resume":
+                    self.multiplexer.resume()
+                    await self.send_status("Agents resumed")
 
         except websockets.exceptions.ConnectionClosed:
             print("[vroom] Extension disconnected")

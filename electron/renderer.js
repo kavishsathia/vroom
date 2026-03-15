@@ -20,6 +20,8 @@ const navForward = document.getElementById('navForward');
 const navRefresh = document.getElementById('navRefresh');
 const themeToggle = document.getElementById('themeToggle');
 
+const pauseBtn = document.getElementById('pauseBtn');
+
 const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
 const logResizeHandle = document.getElementById('logResizeHandle');
 const sidebar = document.querySelector('.sidebar');
@@ -91,7 +93,21 @@ chatInput.addEventListener('keydown', (e) => {
   }
 });
 
-
+let agentsPaused = false;
+pauseBtn.addEventListener('click', () => {
+  agentsPaused = !agentsPaused;
+  if (agentsPaused) {
+    window.vroom.pauseAgents();
+    pauseBtn.classList.add('active');
+    pauseBtn.title = 'Resume agents';
+    pauseBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>';
+  } else {
+    window.vroom.resumeAgents();
+    pauseBtn.classList.remove('active');
+    pauseBtn.title = 'Pause agents';
+    pauseBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+  }
+});
 
 function appendChatMessage(sender, message, isUser) {
   const msg = document.createElement('div');
@@ -364,6 +380,7 @@ function switchToTab(tabId) {
   activeTabId = tabId;
   grid.classList.add('hidden');
   chatSidebar.classList.add('hidden');
+  pauseBtn.classList.add('hidden');
   for (const id in tabs) {
     const isTarget = (id == tabId); // loose comparison for string/int
     tabs[id].sidebarTab.classList.toggle('focused', isTarget);
@@ -379,6 +396,7 @@ function switchToGrid() {
   activeTabId = null;
   grid.classList.remove('hidden');
   chatSidebar.classList.remove('hidden');
+  pauseBtn.classList.remove('hidden');
   for (const id in tabs) {
     tabs[id].sidebarTab.classList.remove('focused');
     if (tabs[id].webview) {
@@ -642,6 +660,7 @@ function createTabCard(tabId, task) {
   if (tabs[tabId]) return;
   emptyState.style.display = 'none';
   chatSidebar.classList.remove('hidden');
+  pauseBtn.classList.remove('hidden');
 
   // Sidebar tab
   const sidebarTab = document.createElement('button');
@@ -766,6 +785,7 @@ function createTabCard(tabId, task) {
 function createGridCard(tabId, task) {
   emptyState.style.display = 'none';
   chatSidebar.classList.remove('hidden');
+  pauseBtn.classList.remove('hidden');
 
   const card = document.createElement('div');
   card.className = 'tab-card active';
@@ -1099,6 +1119,11 @@ function relativeTime(ts) {
 function showHomePage() {
   emptyState.style.display = '';
   chatSidebar.classList.add('hidden');
+  pauseBtn.classList.add('hidden');
+  agentsPaused = false;
+  pauseBtn.classList.remove('active');
+  pauseBtn.title = 'Pause agents';
+  pauseBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
   renderHomePage();
 }
 

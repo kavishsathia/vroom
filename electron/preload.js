@@ -10,5 +10,7 @@ contextBridge.exposeInMainWorld('vroom', {
   preemptAudio: (audioB64, mimeType) => ipcRenderer.send('preempt-audio', audioB64, mimeType),
   sendLog: (message) => ipcRenderer.send('user-log', message),
   focusRenderer: () => ipcRenderer.send('focus-renderer'),
+  pauseAgents: () => ipcRenderer.send('pause-agents'),
+  resumeAgents: () => ipcRenderer.send('resume-agents'),
   onMessage: (callback) => ipcRenderer.on('message', (_, data) => callback(data)),
 });

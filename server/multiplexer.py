@@ -315,8 +315,13 @@ class Multiplexer:
         if self._on_clear_audio:
             await self._on_clear_audio()
 
+    def pause(self):
+        """Pause all agents (they block at wait_if_paused)."""
+        self._resume_event.clear()
+        print(f"[mux] Pipeline paused")
+
     def resume(self):
-        """Resume the pipeline (called when user stops recording)."""
+        """Resume the pipeline."""
         self._resume_event.set()
         print(f"[mux] Pipeline resumed")
 
