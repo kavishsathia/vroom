@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pulse — Operations Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #101112;
+    --surface: #18191b;
+    --surface2: #212225;
+    --surface3: #2a2b2e;
+    --border: rgba(255,255,255,0.06);
+    --text: #b0b3b8;
+    --text2: #6e7179;
+    --text3: #494b50;
+    --blue: #8b8d92;
+    --blue2: #3a3b3e;
+    --cyan: #06b6d4;
+    --green: #3ecf8e;
+    --red: #e5534b;
+    --orange: #d29922;
+    --white: #e6e8eb;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    font-size: 13px;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 220px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .logo-icon {
+    width: 28px;
+    height: 28px;
+    background: #2a2b2e;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .logo-icon svg { width: 16px; height: 16px; }
+
+  .logo span {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--white);
+    letter-spacing: -0.3px;
+  }
+
+  .logo .env {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--green);
+    background: rgba(16,185,129,0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: auto;
+  }
+
+  .nav-group { padding: 16px 12px 8px; }
+
+  .nav-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text3);
+    padding: 0 8px 8px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    color: var(--text2);
+    cursor: pointer;
+    transition: all 0.1s;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .nav-item:hover { background: var(--surface2); color: var(--text); }
+  .nav-item.active { background: var(--surface3); color: var(--white); }
+  .nav-item svg { width: 16px; height: 16px; opacity: 0.6; flex-shrink: 0; }
+  .nav-item.active svg { opacity: 1; }
+
+  .nav-item .count {
+    margin-left: auto;
+    font-size: 11px;
+    background: var(--surface3);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--text2);
+  }
+  .nav-item.active .count { background: rgba(255,255,255,0.08); color: var(--white); }
+
+  .nav-spacer { flex: 1; }
+
+  .sidebar-footer {
+    padding: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .user-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border-radius: 6px;
+  }
+
+  .avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--text2);
+  }
+
+  .user-row .meta { line-height: 1.3; }
+  .user-row .name { font-size: 12px; font-weight: 600; color: var(--text); }
+  .user-row .role { font-size: 11px; color: var(--text3); }
+
+  /* Main */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Top bar */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+
+  .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .topbar h1 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--white);
+  }
+
+  .breadcrumb {
+    font-size: 12px;
+    color: var(--text3);
+  }
+  .breadcrumb span { color: var(--text2); }
+
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .search-box {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--text3);
+  }
+
+  .search-box kbd {
+    font-size: 10px;
+    background: var(--surface3);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: inherit;
+    margin-left: 24px;
+  }
+
+  .topbar-btn {
+    padding: 6px 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text2);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    font-family: inherit;
+  }
+
+  .topbar-btn svg { width: 14px; height: 14px; }
+
+  /* Content */
+  .content {
+    flex: 1;
+    padding: 20px 24px;
+    overflow-y: auto;
+  }
+
+  /* Status strip */
+  .status-strip {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 20px;
+    font-size: 12px;
+  }
+
+  .status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 500;
+  }
+
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+
+  .dot.green { background: var(--green); box-shadow: 0 0 6px rgba(16,185,129,0.4); }
+  .dot.red { background: var(--red); box-shadow: 0 0 6px rgba(239,68,68,0.4); }
+
+  .status-strip .sep {
+    width: 1px;
+    height: 16px;
+    background: var(--border);
+  }
+
+  .status-strip .metric {
+    color: var(--text2);
+  }
+  .status-strip .metric b {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  /* Stat Cards */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+
+  .stat-card .label {
+    font-size: 11px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .stat-card .value {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--white);
+    letter-spacing: -0.5px;
+    margin-bottom: 6px;
+  }
+
+  .stat-card .change {
+    font-size: 11px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .stat-card .change.up { color: var(--green); }
+  .stat-card .change.down { color: var(--red); }
+  .stat-card .change.flat { color: var(--text3); }
+
+  .stat-card .spark {
+    display: flex;
+    gap: 2px;
+    align-items: flex-end;
+    height: 24px;
+    margin-top: 8px;
+  }
+
+  .stat-card .spark span {
+    flex: 1;
+    border-radius: 1px;
+    min-width: 3px;
+  }
+
+  /* Grid layouts */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .grid-3-1 {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .card-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--white);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .card-subtitle {
+    font-size: 11px;
+    color: var(--text3);
+  }
+
+  .card-body { padding: 16px; }
+
+  .chart-container {
+    position: relative;
+    height: 200px;
+  }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; }
+
+  th {
+    text-align: left;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    padding: 10px 12px;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+  }
+
+  th:first-child { border-radius: 6px 0 0 0; }
+  th:last-child { border-radius: 0 6px 0 0; }
+
+  td {
+    padding: 10px 12px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+
+  tr:last-child td { border-bottom: none; }
+
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .pill.ok { background: rgba(16,185,129,0.1); color: var(--green); }
+  .pill.warn { background: rgba(245,158,11,0.1); color: var(--orange); }
+  .pill.err { background: rgba(239,68,68,0.1); color: var(--red); }
+  .pill.info { background: rgba(142,144,150,0.1); color: #8e9096; }
+
+  .mono {
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 11px;
+    color: var(--text2);
+  }
+
+  .bar-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .mini-bar {
+    width: 60px;
+    height: 4px;
+    background: var(--surface3);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .mini-bar .fill {
+    height: 100%;
+    border-radius: 2px;
+  }
+
+  /* Region badges */
+  .region {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text2);
+  }
+
+  .region::before {
+    content: '';
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--text3);
+  }
+
+  /* Log feed */
+  .log-entry {
+    display: flex;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+
+  .log-entry:last-child { border-bottom: none; }
+
+  .log-time {
+    color: var(--text3);
+    font-family: 'SF Mono', monospace;
+    font-size: 11px;
+    flex-shrink: 0;
+    min-width: 52px;
+  }
+
+  .log-level {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .log-level.info { background: rgba(142,144,150,0.12); color: #8e9096; }
+  .log-level.warn { background: rgba(245,158,11,0.12); color: var(--orange); }
+  .log-level.ok { background: rgba(16,185,129,0.12); color: var(--green); }
+
+  .log-msg { color: var(--text); }
+  .log-msg .dim { color: var(--text3); }
+</style>
+</head>
+<body>
+  <nav class="sidebar">
+    <div class="logo">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+        </svg>
+      </div>
+      <span>Pulse</span>
+      <span class="env">PROD</span>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-label">Monitoring</div>
+      <div class="nav-item active">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Overview
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Metrics
+        <span class="count">24</span>
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Logs
+        <span class="count">1.2K</span>
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Alerts
+        <span class="count">3</span>
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Uptime
+      </div>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-label">Infrastructure</div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+        Services
+        <span class="count">12</span>
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        Databases
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        Deployments
+        <span class="count">v2.14</span>
+      </div>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-label">Business</div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        Revenue
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Customers
+      </div>
+    </div>
+
+    <div class="nav-spacer"></div>
+
+    <div class="sidebar-footer">
+      <div class="user-row">
+        <div class="avatar">KS</div>
+        <div class="meta">
+          <div class="name">Kavish Sathia</div>
+          <div class="role">Platform Admin</div>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="breadcrumb">Monitoring <span>/ Overview</span></div>
+      </div>
+      <div class="topbar-right">
+        <div class="search-box">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Search...
+          <kbd>/</kbd>
+        </div>
+        <button class="topbar-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        </button>
+        <button class="topbar-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="content">
+      <!-- Status Strip -->
+      <div class="status-strip">
+        <div class="status-indicator">
+          <div class="dot green"></div>
+          All Systems Operational
+        </div>
+        <div class="sep"></div>
+        <div class="metric">Uptime: <b>99.97%</b></div>
+        <div class="sep"></div>
+        <div class="metric">P99 Latency: <b>218ms</b></div>
+        <div class="sep"></div>
+        <div class="metric">Active Connections: <b>14,281</b></div>
+        <div class="sep"></div>
+        <div class="metric">Region: <b>us-central1</b></div>
+        <div class="metric" style="margin-left:auto; color:var(--text3);">Last updated: 12s ago</div>
+      </div>
+
+      <!-- Stats Row -->
+      <div class="stats">
+        <div class="stat-card">
+          <div class="label">Requests / sec</div>
+          <div class="value">3,842</div>
+          <div class="change up">+12.4% from avg</div>
+          <div class="spark" id="spark1"></div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Error Rate</div>
+          <div class="value">0.02%</div>
+          <div class="change up">-0.01% from avg</div>
+          <div class="spark" id="spark2"></div>
+        </div>
+        <div class="stat-card">
+          <div class="label">MRR</div>
+          <div class="value">$182K</div>
+          <div class="change up">+$14K this month</div>
+          <div class="spark" id="spark3"></div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Active Users</div>
+          <div class="value">8,412</div>
+          <div class="change up">+340 this week</div>
+          <div class="spark" id="spark4"></div>
+        </div>
+        <div class="stat-card">
+          <div class="label">CPU Utilization</div>
+          <div class="value">34%</div>
+          <div class="change flat">within threshold</div>
+          <div class="spark" id="spark5"></div>
+        </div>
+      </div>
+
+      <!-- Charts -->
+      <div class="grid-3-1">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Request Volume & Latency (7d)</div>
+            <div class="card-subtitle">P50 / P95 / P99 overlay</div>
+          </div>
+          <div class="card-body">
+            <div class="chart-container">
+              <canvas id="requestChart"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Error Breakdown</div>
+            <div class="card-subtitle">Last 24h by type</div>
+          </div>
+          <div class="card-body">
+            <div class="chart-container">
+              <canvas id="errorChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tables Row -->
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Service Health</div>
+            <div class="card-subtitle">12 services across 3 regions</div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th>Status</th>
+                <th>Region</th>
+                <th>CPU</th>
+                <th>Memory</th>
+                <th>Latency</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="font-weight:600; color:var(--white);">api-gateway</td>
+                <td><span class="pill ok">Healthy</span></td>
+                <td><span class="region">us-central1</span></td>
+                <td class="bar-cell"><div class="mini-bar"><div class="fill" style="width:28%;background:var(--green)"></div></div> <span class="mono">28%</span></td>
+                <td class="bar-cell"><div class="mini-bar"><div class="fill" style="width:45%;background:#6e7179"></div></div> <span class="mono">45%</span></td>
+                <td class="mono">42ms</td>
+              </tr>
+              <tr>
+                <td style="font-weight:600; color:var(--white);">auth-service</td>
+                <td><span class="pill ok">Healthy</span></td>
+                <td><span class="region">us-central1</span></td>
+                <td class="bar-cell"><div class="mini-bar"><div class="fill" style="width:15%;background:var(--green)"></div></div> <span class="mono">15%</span></td>
+                <td class="bar-cell"><div class="mini-bar"><div class="fill" style="width:32%;background:#6e7179"></div></div> <span class="mono">32%</span></td>
+                <td class="mono">31ms</td>
+              </tr>
+              <tr>
+                <td style="font-weight:600; color:var(--white);">billing-engine</td>
+                <td><span class="pill ok">Healthy</span></td>
+                <td><span class="region">us-east1</span></td>
+                <td class="bar-cell"><div class="mini-bar"><div class="fill" style="width:52%;background:var(--orange)"></div></div> <span class="mono">52%</span></td>
+                <td class="bar-cell"><div class="mini-bar"><div class="fill" style="width:61%;background:#6e7179"></div></div> <span class="mono">61%</span></td>
+                <td class="mono">88ms</td>
+              </tr>
+              <tr>
+                <td style="font-weight:600; color:var(--white);">event-processor</td>
+                <td><span class="pill ok">Healthy</span></td>
+                <td><span class="region">us-central1</span></td>
+                <td class="bar-cell"><div class="mini-bar"><div class="fill" style="width:38%;background:var(--green)"></div></div> <span class="mono">38%</span></td>
+                <td class="bar-cell"><div class="mini-bar"><div class="fill" style="width:55%;background:#6e7179"></div></div> <span class="mono">55%</span></td>
+                <td class="mono">12ms</td>
+              </tr>
+              <tr>
+                <td style="font-weight:600; color:var(--white);">search-indexer</td>
+                <td><span class="pill warn">Degraded</span></td>
+                <td><span class="region">europe-west1</span></td>
+                <td class="bar-cell"><div class="mini-bar"><div class="fill" style="width:71%;background:var(--orange)"></div></div> <span class="mono">71%</span></td>
+                <td class="bar-cell"><div class="mini-bar"><div class="fill" style="width:78%;background:var(--orange)"></div></div> <span class="mono">78%</span></td>
+                <td class="mono">342ms</td>
+              </tr>
+              <tr>
+                <td style="font-weight:600; color:var(--white);">notification-svc</td>
+                <td><span class="pill ok">Healthy</span></td>
+                <td><span class="region">us-east1</span></td>
+                <td class="bar-cell"><div class="mini-bar"><div class="fill" style="width:22%;background:var(--green)"></div></div> <span class="mono">22%</span></td>
+                <td class="bar-cell"><div class="mini-bar"><div class="fill" style="width:40%;background:#6e7179"></div></div> <span class="mono">40%</span></td>
+                <td class="mono">56ms</td>
+              </tr>
+              <tr>
+                <td style="font-weight:600; color:var(--white);">cdn-edge</td>
+                <td><span class="pill ok">Healthy</span></td>
+                <td><span class="region">global</span></td>
+                <td class="bar-cell"><div class="mini-bar"><div class="fill" style="width:8%;background:var(--green)"></div></div> <span class="mono">8%</span></td>
+                <td class="bar-cell"><div class="mini-bar"><div class="fill" style="width:18%;background:#6e7179"></div></div> <span class="mono">18%</span></td>
+                <td class="mono">4ms</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Recent Deployments</div>
+            <div class="card-subtitle">CI/CD pipeline</div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Version</th>
+                <th>Status</th>
+                <th>Service</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="mono" style="color:var(--white);">v2.14.3</td>
+                <td><span class="pill ok">Success</span></td>
+                <td>api-gateway</td>
+                <td class="mono">2m ago</td>
+              </tr>
+              <tr>
+                <td class="mono" style="color:var(--white);">v1.8.1</td>
+                <td><span class="pill ok">Success</span></td>
+                <td>billing-engine</td>
+                <td class="mono">18m ago</td>
+              </tr>
+              <tr>
+                <td class="mono" style="color:var(--white);">v3.2.0</td>
+                <td><span class="pill ok">Success</span></td>
+                <td>auth-service</td>
+                <td class="mono">1h ago</td>
+              </tr>
+              <tr>
+                <td class="mono" style="color:var(--white);">v2.14.2</td>
+                <td><span class="pill ok">Success</span></td>
+                <td>api-gateway</td>
+                <td class="mono">4h ago</td>
+              </tr>
+              <tr>
+                <td class="mono" style="color:var(--white);">v1.3.7</td>
+                <td><span class="pill err">Failed</span></td>
+                <td>search-indexer</td>
+                <td class="mono">6h ago</td>
+              </tr>
+              <tr>
+                <td class="mono" style="color:var(--white);">v1.3.6</td>
+                <td><span class="pill ok">Rollback</span></td>
+                <td>search-indexer</td>
+                <td class="mono">6h ago</td>
+              </tr>
+              <tr>
+                <td class="mono" style="color:var(--white);">v5.0.2</td>
+                <td><span class="pill ok">Success</span></td>
+                <td>event-processor</td>
+                <td class="mono">8h ago</td>
+              </tr>
+              <tr>
+                <td class="mono" style="color:var(--white);">v2.1.0</td>
+                <td><span class="pill ok">Success</span></td>
+                <td>notification-svc</td>
+                <td class="mono">12h ago</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Logs -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Live Event Stream</div>
+          <div class="card-subtitle">Filtered: severity >= INFO</div>
+        </div>
+        <div class="card-body">
+          <div class="log-entry">
+            <span class="log-time">14:32:08</span>
+            <span class="log-level ok">OK</span>
+            <span class="log-msg">Deploy <b>v2.14.3</b> to api-gateway completed <span class="dim">(3 instances, 0 errors)</span></span>
+          </div>
+          <div class="log-entry">
+            <span class="log-time">14:31:45</span>
+            <span class="log-level info">INFO</span>
+            <span class="log-msg">Rolling update started for api-gateway <span class="dim">us-central1-a, us-central1-b</span></span>
+          </div>
+          <div class="log-entry">
+            <span class="log-time">14:28:12</span>
+            <span class="log-level warn">WARN</span>
+            <span class="log-msg">search-indexer memory usage at 78% <span class="dim">(threshold: 80%)</span></span>
+          </div>
+          <div class="log-entry">
+            <span class="log-time">14:25:33</span>
+            <span class="log-level info">INFO</span>
+            <span class="log-msg">Auto-scaled event-processor from 4 to 6 replicas <span class="dim">(queue depth: 12,400)</span></span>
+          </div>
+          <div class="log-entry">
+            <span class="log-time">14:22:01</span>
+            <span class="log-level ok">OK</span>
+            <span class="log-msg">SSL certificate renewed for *.pulse.dev <span class="dim">(expires: 2027-03-16)</span></span>
+          </div>
+          <div class="log-entry">
+            <span class="log-time">14:18:47</span>
+            <span class="log-level info">INFO</span>
+            <span class="log-msg">billing-engine batch job completed <span class="dim">(processed 2,847 invoices in 42s)</span></span>
+          </div>
+          <div class="log-entry">
+            <span class="log-time">14:14:22</span>
+            <span class="log-level warn">WARN</span>
+            <span class="log-msg">Rate limit triggered for client <span class="dim">acme-corp (tier: enterprise, limit: 10K/min)</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const fc = '#6b7280';
+    const gc = 'rgba(255,255,255,0.03)';
+
+    Chart.defaults.color = fc;
+    Chart.defaults.font.family = 'Inter, sans-serif';
+    Chart.defaults.font.size = 11;
+
+    // Sparklines
+    function sparkline(id, data, color) {
+      const el = document.getElementById(id);
+      data.forEach(v => {
+        const bar = document.createElement('span');
+        bar.style.height = v + '%';
+        bar.style.background = color;
+        bar.style.opacity = '0.5';
+        el.appendChild(bar);
+      });
+    }
+
+    sparkline('spark1', [40,55,48,62,58,70,65,72,68,75,80,78,82,85,78,82], '#6e7179');
+    sparkline('spark2', [30,25,35,20,28,22,18,25,20,15,18,12,15,10,12,8], '#3ecf8e');
+    sparkline('spark3', [30,35,38,42,40,45,48,50,52,55,58,60,62,65,68,72], '#6e7179');
+    sparkline('spark4', [45,50,48,55,60,58,62,65,60,68,70,72,75,78,80,82], '#6e7179');
+    sparkline('spark5', [40,38,42,35,45,40,32,38,30,35,28,32,34,36,38,34], '#494b50');
+
+    // Request Volume Chart
+    const hours = Array.from({length: 24}, (_, i) => `${String(i).padStart(2,'0')}:00`);
+    const reqData = [2800,2400,1800,1200,900,800,950,1400,2200,3100,3600,3800,3900,3700,3500,3400,3600,3800,4100,3900,3600,3400,3200,3000];
+    const p50 = [38,35,32,28,25,24,26,30,35,40,42,44,45,43,42,41,42,44,48,46,42,40,38,36];
+    const p95 = [120,110,95,80,72,68,75,90,110,130,140,148,152,145,138,135,140,148,160,152,140,132,125,118];
+    const p99 = [220,200,180,150,130,120,135,170,200,240,260,275,280,268,255,248,260,275,300,280,260,245,230,215];
+
+    new Chart(document.getElementById('requestChart'), {
+      type: 'line',
+      data: {
+        labels: hours,
+        datasets: [
+          {
+            label: 'Requests/s',
+            data: reqData,
+            borderColor: '#8b8d92',
+            backgroundColor: 'rgba(139,141,146,0.06)',
+            fill: true,
+            tension: 0.3,
+            borderWidth: 1.5,
+            pointRadius: 0,
+            yAxisID: 'y',
+          },
+          {
+            label: 'P50 (ms)',
+            data: p50,
+            borderColor: '#3ecf8e',
+            borderWidth: 1.5,
+            borderDash: [4,3],
+            tension: 0.3,
+            pointRadius: 0,
+            yAxisID: 'y1',
+          },
+          {
+            label: 'P95 (ms)',
+            data: p95,
+            borderColor: '#d29922',
+            borderWidth: 1,
+            borderDash: [4,3],
+            tension: 0.3,
+            pointRadius: 0,
+            yAxisID: 'y1',
+          },
+          {
+            label: 'P99 (ms)',
+            data: p99,
+            borderColor: '#e5534b',
+            borderWidth: 1,
+            borderDash: [2,2],
+            tension: 0.3,
+            pointRadius: 0,
+            yAxisID: 'y1',
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: 'index' },
+        plugins: {
+          legend: { position: 'top', align: 'end', labels: { boxWidth: 8, padding: 16, font: { size: 10 } } }
+        },
+        scales: {
+          x: { grid: { color: gc }, border: { display: false }, ticks: { maxTicksLimit: 12 } },
+          y: { position: 'left', grid: { color: gc }, border: { display: false }, title: { display: true, text: 'req/s', font: { size: 10 }, color: '#4b5563' } },
+          y1: { position: 'right', grid: { display: false }, border: { display: false }, title: { display: true, text: 'ms', font: { size: 10 }, color: '#4b5563' } },
+        }
+      }
+    });
+
+    // Error Breakdown
+    new Chart(document.getElementById('errorChart'), {
+      type: 'bar',
+      data: {
+        labels: ['4xx Client', '5xx Server', 'Timeout', 'DNS', 'TLS'],
+        datasets: [{
+          data: [142, 23, 8, 2, 1],
+          backgroundColor: ['#6e7179', '#e5534b', '#d29922', '#494b50', '#494b50'],
+          borderRadius: 4,
+          barThickness: 28,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        indexAxis: 'y',
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: gc }, border: { display: false } },
+          y: { grid: { display: false }, border: { display: false } },
+        }
+      }
+    });
+  </script>
+</body>
+</html>

@@ -51,8 +51,7 @@ resource "google_sql_database_instance" "postgres" {
     availability_type = "ZONAL"
 
     ip_configuration {
-      ipv4_enabled = false
-      # Private IP not needed — Cloud Run uses Cloud SQL connector
+      ipv4_enabled = true
     }
   }
 
@@ -86,15 +85,20 @@ resource "google_cloud_run_v2_service" "server" {
     }
 
     containers {
-      image = "${var.region}-docker.pkg.dev/${var.project_id}/vroom/server:latest"
+      image = "${var.region}-docker.pkg.dev/${var.project_id}/vroom/server:v3"
 
       ports {
-        container_port = 8765
+        container_port = 8080
+      }
+
+      env {
+        name  = "HOST"
+        value = "0.0.0.0"
       }
 
       env {
         name  = "DATABASE_URL"
-        value = "postgresql://vroom:${var.db_password}@localhost/vroom?host=/cloudsql/${google_sql_database_instance.postgres.connection_name}"
+        value = "postgresql://vroom:${var.db_password}@/vroom?host=/cloudsql/${google_sql_database_instance.postgres.connection_name}"
       }
 
       env {
@@ -117,6 +121,11 @@ resource "google_cloud_run_v2_service" "server" {
           cpu    = "1"
           memory = "512Mi"
         }
+      }
+
+      volume_mounts {
+        name       = "cloudsql"
+        mount_path = "/cloudsql"
       }
     }
 

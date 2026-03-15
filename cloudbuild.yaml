@@ -1,0 +1,25 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--platform'
+      - 'linux/amd64'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/vroom/server:$COMMIT_SHA'
+      - 'server/'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/vroom/server:$COMMIT_SHA'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    args:
+      - 'gcloud'
+      - 'run'
+      - 'deploy'
+      - 'vroom-server'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/vroom/server:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
