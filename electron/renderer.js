@@ -548,8 +548,6 @@ function switchToTab(tabId) {
   if (visualPreemptActive && visualPreemptTabId != tabId) endVisualPreempt();
   activeTabId = tabId;
   grid.classList.add('hidden');
-  chatSidebar.classList.add('hidden');
-  pauseBtn.classList.add('hidden');
   for (const id in tabs) {
     const isTarget = (id == tabId); // loose comparison for string/int
     tabs[id].sidebarTab.classList.toggle('focused', isTarget);

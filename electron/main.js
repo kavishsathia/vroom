@@ -17,7 +17,7 @@ const pendingTabRequests = {}; // requestId -> { tabIds, total, ready }
 
 // --- Settings & Auth ---
 
-const MANAGED_URL = 'ws://localhost:8765';
+const MANAGED_URL = 'wss://vroom-server-1015707621033.us-central1.run.app';
 const MANAGED_GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const MANAGED_GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
 
@@ -307,29 +307,68 @@ async function connectWebSocket() {
         if (data.action === 'click') {
           await dbg.sendCommand('Runtime.evaluate', {
             expression: `(function(){
-              const el = document.elementFromPoint(${data.x}, ${data.y});
-              if (el) {
-                el.dispatchEvent(new MouseEvent('mousedown', {bubbles:true,clientX:${data.x},clientY:${data.y}}));
-                el.dispatchEvent(new MouseEvent('mouseup', {bubbles:true,clientX:${data.x},clientY:${data.y}}));
-                el.dispatchEvent(new MouseEvent('click', {bubbles:true,clientX:${data.x},clientY:${data.y}}));
-                el.focus && el.focus();
-              }
+              const x=${data.x}, y=${data.y};
+              const el = document.elementFromPoint(x, y);
+              if (!el) return;
+              const opts = {bubbles:true,cancelable:true,clientX:x,clientY:y,pointerId:1,pointerType:'mouse'};
+              el.dispatchEvent(new PointerEvent('pointerdown', opts));
+              el.dispatchEvent(new MouseEvent('mousedown', opts));
+              el.dispatchEvent(new PointerEvent('pointerup', opts));
+              el.dispatchEvent(new MouseEvent('mouseup', opts));
+              el.dispatchEvent(new MouseEvent('click', opts));
+              if (el.focus && (el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.tagName==='SELECT'||el.isContentEditable||el.tabIndex>=0)) el.focus();
+            })()`,
+          });
+        } else if (data.action === 'hover') {
+          await dbg.sendCommand('Runtime.evaluate', {
+            expression: `(function(){
+              const x=${data.x}, y=${data.y};
+              const el = document.elementFromPoint(x, y);
+              if (!el) return;
+              const opts = {bubbles:true,clientX:x,clientY:y,pointerId:1,pointerType:'mouse'};
+              el.dispatchEvent(new PointerEvent('pointermove', opts));
+              el.dispatchEvent(new MouseEvent('mouseover', opts));
+              el.dispatchEvent(new MouseEvent('mouseenter', {...opts, bubbles:false}));
+              el.dispatchEvent(new MouseEvent('mousemove', opts));
             })()`,
           });
         } else if (data.action === 'type') {
-          const escaped = data.text.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+          const escaped = data.text.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
           await dbg.sendCommand('Runtime.evaluate', {
-            expression: `document.execCommand('insertText', false, '${escaped}')`,
+            expression: `(function(){
+              const el = document.activeElement;
+              if (el) document.execCommand('insertText', false, '${escaped}');
+            })()`,
+          });
+        } else if (data.action === 'key_press') {
+          const escaped = data.key.replace(/'/g, "\\'");
+          await dbg.sendCommand('Runtime.evaluate', {
+            expression: `(function(){
+              const el = document.activeElement;
+              if (!el) return;
+              const opts = {bubbles:true,cancelable:true,key:'${escaped}',ctrlKey:${!!data.ctrl},shiftKey:${!!data.shift},altKey:${!!data.alt},metaKey:${!!data.meta}};
+              el.dispatchEvent(new KeyboardEvent('keydown', opts));
+              el.dispatchEvent(new KeyboardEvent('keypress', opts));
+              if ('${escaped}'==='Enter') {
+                const form = el.closest && el.closest('form');
+                if (form) form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));
+                else if (el.tagName==='TEXTAREA') document.execCommand('insertText',false,'\\n');
+              }
+              el.dispatchEvent(new KeyboardEvent('keyup', opts));
+            })()`,
           });
         } else if (data.action === 'navigate') {
           await entry.webContents.loadURL(data.url);
-        } else if (data.action === 'scroll_down') {
-          await dbg.sendCommand('Runtime.evaluate', {
-            expression: `window.scrollBy(0, 300)`,
+          await new Promise(resolve => {
+            entry.webContents.once('did-finish-load', resolve);
+            setTimeout(resolve, 10000);
           });
-        } else if (data.action === 'scroll_up') {
+        } else if (data.action === 'scroll') {
+          const amount = data.amount || 400;
+          const dx = data.direction === 'left' ? -amount : data.direction === 'right' ? amount : 0;
+          const dy = data.direction === 'up' ? -amount : data.direction === 'down' ? amount : 0;
           await dbg.sendCommand('Runtime.evaluate', {
-            expression: `window.scrollBy(0, -300)`,
+            expression: `window.scrollBy(${dx}, ${dy})`,
           });
         }
         respond({ type: 'action_result', success: true, requestId: rid });

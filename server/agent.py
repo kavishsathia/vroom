@@ -82,8 +82,53 @@ TOOLS = [
                 ),
             ),
             types.FunctionDeclaration(
+                name="key_press",
+                description="Press a keyboard key. Supports: Enter, Tab, Escape, Backspace, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Space. Can combine with modifiers.",
+                parameters=types.Schema(
+                    type="OBJECT",
+                    properties={
+                        "key": types.Schema(
+                            type="STRING",
+                            description="Key to press (e.g. 'Enter', 'Tab', 'Escape', 'Backspace', 'ArrowDown')",
+                        ),
+                        "ctrl": types.Schema(
+                            type="BOOLEAN",
+                            description="Hold Ctrl/Cmd",
+                        ),
+                        "shift": types.Schema(
+                            type="BOOLEAN",
+                            description="Hold Shift",
+                        ),
+                        "alt": types.Schema(
+                            type="BOOLEAN",
+                            description="Hold Alt",
+                        ),
+                    },
+                    required=["key"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="hover",
+                description="Hover over an element to reveal tooltips, dropdowns, or hidden menus.",
+                parameters=types.Schema(
+                    type="OBJECT",
+                    properties={
+                        "box_2d": types.Schema(
+                            type="ARRAY",
+                            items=types.Schema(type="INTEGER"),
+                            description="Bounding box [y_min, x_min, y_max, x_max] in normalized 0-1000 coordinates",
+                        ),
+                        "label": types.Schema(
+                            type="STRING",
+                            description="Description of the element being hovered",
+                        ),
+                    },
+                    required=["box_2d"],
+                ),
+            ),
+            types.FunctionDeclaration(
                 name="navigate",
-                description="Navigate to a specific URL.",
+                description="Navigate to a specific URL. Waits for the page to finish loading.",
                 parameters=types.Schema(
                     type="OBJECT",
                     properties={
@@ -97,13 +142,17 @@ TOOLS = [
             ),
             types.FunctionDeclaration(
                 name="scroll",
-                description="Scroll the page up or down.",
+                description="Scroll the page. Supports up, down, left, right. Can specify pixel amount.",
                 parameters=types.Schema(
                     type="OBJECT",
                     properties={
                         "direction": types.Schema(
                             type="STRING",
-                            description="Scroll direction: 'up' or 'down'",
+                            description="Scroll direction: 'up', 'down', 'left', or 'right'",
+                        ),
+                        "amount": types.Schema(
+                            type="INTEGER",
+                            description="Pixels to scroll (default 400)",
                         ),
                     },
                     required=["direction"],
@@ -631,10 +680,28 @@ class Agent:
                     "x": x,
                     "y": y,
                 })
+            elif fn == "hover" and "box_2d" in args and len(args["box_2d"]) == 4:
+                box = args["box_2d"]
+                x = int(((box[1] + box[3]) / 2) / 1000 * vw)
+                y = int(((box[0] + box[2]) / 2) / 1000 * vh)
+                print(f"[agent:{self.tab_id}] BBox {box} -> hover at ({x}, {y})")
+                await self.server.send_action(self.tab_id, {
+                    "action": "hover",
+                    "x": x,
+                    "y": y,
+                })
             elif fn == "type":
                 await self.server.send_action(self.tab_id, {
                     "action": "type",
                     "text": args.get("text", ""),
+                })
+            elif fn == "key_press":
+                await self.server.send_action(self.tab_id, {
+                    "action": "key_press",
+                    "key": args.get("key", "Enter"),
+                    "ctrl": args.get("ctrl", False),
+                    "shift": args.get("shift", False),
+                    "alt": args.get("alt", False),
                 })
             elif fn == "navigate":
                 await self.server.send_action(self.tab_id, {
@@ -645,6 +712,7 @@ class Agent:
                 await self.server.send_action(self.tab_id, {
                     "action": "scroll",
                     "direction": args.get("direction", "down"),
+                    "amount": args.get("amount", 400),
                 })
 
             # Send function response for browser actions
