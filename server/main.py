@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import websockets
 from extractor import Extractor
 from multiplexer import Multiplexer
+from skills import SkillStore
 
 load_dotenv()
 
@@ -14,6 +15,7 @@ class VroomServer:
         self.ws = None
         self._pending = {}  # requestId -> future
         self._request_counter = 0
+        self.skill_store = SkillStore()
         self.multiplexer = Multiplexer(
             on_message=self._on_agent_message,
             on_audio_chunk=self._on_agent_audio_chunk,
@@ -127,7 +129,7 @@ class VroomServer:
 
     async def _run_task(self, text, existing_tabs=None):
         try:
-            extractor = Extractor(self, multiplexer=self.multiplexer)
+            extractor = Extractor(self, multiplexer=self.multiplexer, skill_store=self.skill_store)
             await extractor.run(text, existing_tabs=existing_tabs)
 
         except Exception as e:
