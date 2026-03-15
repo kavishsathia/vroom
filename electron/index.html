@@ -302,91 +302,35 @@
     .sidebar .task-section {
       padding: 12px;
       border-bottom: 1px solid var(--border);
-      position: relative;
-    }
-    .sidebar .task-section textarea {
-      width: 100%;
-      padding: 8px 12px;
-      border: none;
-      border-radius: 8px;
-      background: var(--input-bg);
-      color: var(--text);
-      font-family: inherit;
-      font-size: 13px;
-      outline: none;
-      margin-bottom: 8px;
-      resize: none;
-      overflow: hidden;
-      min-height: 34px;
-      max-height: 160px;
-      line-height: 1.4;
-    }
-    .sidebar .task-section textarea::placeholder { color: var(--text-tertiary); }
-    .sidebar .task-section .attached-tabs {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
-      margin-bottom: 6px;
-    }
-    .sidebar .task-section .attached-tabs:empty { display: none; }
-    .sidebar .task-section .tab-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 3px 8px;
-      border-radius: 6px;
-      background: var(--input-bg);
-      color: var(--text-secondary);
-      font-size: 11px;
-      border: 1px solid var(--border);
-    }
-    .sidebar .task-section .tab-chip .chip-remove {
-      background: none;
-      border: none;
-      color: var(--text-tertiary);
-      font-size: 12px;
-      cursor: pointer;
-      padding: 0 2px;
-      line-height: 1;
-    }
-    .sidebar .task-section .tab-chip .chip-remove:hover { color: var(--text); }
-    .sidebar .task-section textarea.drag-over {
-      box-shadow: 0 0 0 2px var(--speech-spotlight);
-      background: var(--sidebar-hover);
-    }
-    .sidebar .task-section textarea:focus {
-      box-shadow: 0 0 0 2px var(--speech-spotlight);
-    }
-    .sidebar .task-section .task-actions {
       display: flex;
       gap: 6px;
     }
-    .sidebar .task-section button {
+    .sidebar .task-section .new-task-btn {
       flex: 1;
       padding: 7px 0;
       border: none;
       border-radius: 8px;
+      background: var(--btn-bg);
+      color: var(--btn-text);
       font-family: inherit;
       font-size: 12px;
       font-weight: 500;
       cursor: pointer;
       transition: background 0.15s;
     }
-    .sidebar .task-section .run-btn {
-      background: var(--btn-bg);
-      color: var(--btn-text);
-    }
-    .sidebar .task-section .run-btn:hover { background: var(--btn-hover); }
-    .sidebar .task-section .run-btn:disabled {
-      background: var(--btn-disabled-bg);
-      color: var(--btn-disabled-text);
-      cursor: not-allowed;
-    }
+    .sidebar .task-section .new-task-btn:hover { background: var(--btn-hover); }
     .sidebar .task-section .log-btn {
-      background: var(--input-bg);
-      color: var(--text-secondary);
       flex: 0 0 auto;
       padding: 7px 12px;
+      border: none;
+      border-radius: 8px;
+      background: var(--input-bg);
+      color: var(--text-secondary);
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
     }
     .sidebar .task-section .log-btn:hover { background: var(--sidebar-hover); }
     /* Task group */
@@ -700,6 +644,10 @@
     .grid.hidden {
       display: none;
     }
+    .grid.drag-over {
+      outline: 2px dashed var(--speech-spotlight);
+      outline-offset: -2px;
+    }
 
     .tab-card {
       background: var(--bg);
@@ -708,6 +656,8 @@
       flex-direction: column;
     }
     .tab-card.active { background: var(--card-active); }
+    .tab-card.unattached { opacity: 0.7; }
+    .tab-card.unattached .tab-status { display: none; }
 
     .tab-card .card-header {
       display: flex;
@@ -899,9 +849,20 @@
     }
     .chat-sidebar .chat-input-row {
       display: flex;
+      align-items: center;
       gap: 6px;
       padding: 8px 10px;
       border-top: 1px solid var(--border);
+    }
+    .chat-sidebar .chat-input-row .unmute-btn,
+    .chat-sidebar .chat-input-row .pause-btn {
+      flex-shrink: 0;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     .chat-sidebar .chat-input {
       flex: 1;
@@ -1356,12 +1317,8 @@
   <div class="main-layout">
     <div class="sidebar">
       <div class="task-section">
-        <textarea id="taskInput" rows="1" placeholder="describe a task..." autofocus></textarea>
-        <div class="attached-tabs" id="attachedTabs"></div>
-        <div class="task-actions">
-          <button class="run-btn" id="runBtn">Run</button>
-          <button class="log-btn" id="logToggle">Logs</button>
-        </div>
+        <button class="new-task-btn" id="newTaskBtn2">New Task</button>
+        <button class="log-btn" id="logToggle">Logs</button>
       </div>
       <div class="tabs-header">
         <span>Tabs</span>
@@ -1383,8 +1340,6 @@
         </div>
         <div class="status-area">
           <button class="take-control-btn hidden" id="takeControlBtn" title="Take control"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M4 2l12 10h-6l4 8-3 1-4-8-3 3z"/></svg></button>
-          <button class="pause-btn hidden" id="pauseBtn" title="Pause agents"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></button>
-          <button class="unmute-btn" id="unmuteBtn" title="Push to talk"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="2" x2="22" y2="22"/></svg></button>
           <button class="settings-gear" id="settingsBtn" title="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
           <button class="theme-toggle" id="themeToggle" title="Toggle theme">&#x263E;</button>
           <div class="status-dot" id="statusDot"></div>
@@ -1413,7 +1368,9 @@
           <div class="panel-content" id="panelChat">
             <div class="chat-messages" id="chatMessages"></div>
             <div class="chat-input-row">
-              <input type="text" class="chat-input" id="chatInput" placeholder="Message agents..." />
+              <button class="unmute-btn" id="unmuteBtn" title="Push to talk"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="2" x2="22" y2="22"/></svg></button>
+              <button class="pause-btn hidden" id="pauseBtn" title="Pause agents"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></button>
+              <input type="text" class="chat-input" id="chatInput" placeholder="Describe your task..." />
               <button class="chat-send-btn" id="chatSendBtn">Send</button>
             </div>
           </div>

@@ -3,8 +3,7 @@ const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const grid = document.getElementById('grid');
 const emptyState = document.getElementById('emptyState');
-const taskInput = document.getElementById('taskInput');
-const runBtn = document.getElementById('runBtn');
+const newTaskBtn2 = document.getElementById('newTaskBtn2');
 const logEntries = document.getElementById('logEntries');
 const webviewLayer = document.getElementById('webviewLayer');
 
@@ -32,50 +31,68 @@ const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
 const logResizeHandle = document.getElementById('logResizeHandle');
 const sidebar = document.querySelector('.sidebar');
 
-const attachedTabs = document.getElementById('attachedTabs');
-const attachedTabIds = []; // tab IDs dragged into the prompt
+// --- Workspace state ---
+let workspaceActive = false;
+let firstMessageSent = false;
 
-// --- Drag & drop tabs into prompt ---
-taskInput.addEventListener('dragover', (e) => {
+// --- Drag & drop tabs into grid ---
+grid.addEventListener('dragover', (e) => {
   e.preventDefault();
-  taskInput.classList.add('drag-over');
+  grid.classList.add('drag-over');
 });
-taskInput.addEventListener('dragleave', () => {
-  taskInput.classList.remove('drag-over');
+grid.addEventListener('dragleave', () => {
+  grid.classList.remove('drag-over');
 });
-taskInput.addEventListener('drop', (e) => {
+grid.addEventListener('drop', (e) => {
   e.preventDefault();
-  taskInput.classList.remove('drag-over');
+  grid.classList.remove('drag-over');
   const tabId = parseInt(e.dataTransfer.getData('text/tab-id'));
   if (!tabId || isNaN(tabId)) return;
-  // Only allow user tabs (negative IDs) to be attached
   if (!tabs[tabId] || !tabs[tabId].isUserTab) return;
-  if (attachedTabIds.includes(tabId)) return;
-  attachedTabIds.push(tabId);
-  renderAttachedTabs();
+  if (!currentTaskGroup) return;
+  if (currentTaskGroup.tabIds.includes(tabId)) return;
+  addTabToWorkspace(tabId);
 });
 
-function renderAttachedTabs() {
-  attachedTabs.innerHTML = '';
-  for (const tabId of attachedTabIds) {
-    const chip = document.createElement('div');
-    chip.className = 'tab-chip';
-    const entry = tabs[tabId];
-    const title = entry && entry.sidebarTab
-      ? entry.sidebarTab.querySelector('.tab-title')?.textContent || `Tab ${tabId}`
-      : `Tab ${tabId}`;
-    chip.innerHTML = `<span>${title}</span>`;
-    const removeBtn = document.createElement('button');
-    removeBtn.className = 'chip-remove';
-    removeBtn.textContent = '\u00d7';
-    removeBtn.addEventListener('click', () => {
-      const idx = attachedTabIds.indexOf(tabId);
-      if (idx !== -1) attachedTabIds.splice(idx, 1);
-      renderAttachedTabs();
-    });
-    chip.appendChild(removeBtn);
-    attachedTabs.appendChild(chip);
+function addTabToWorkspace(tabId) {
+  const entry = tabs[tabId];
+  if (!entry) return;
+  // Move sidebar tab into task group
+  if (currentTaskGroup) {
+    currentTaskGroup.tabsContainer.appendChild(entry.sidebarTab);
+    currentTaskGroup.tabIds.push(tabId);
   }
+  // Create an unattached grid card
+  createGridCard(tabId, entry.sidebarTab.querySelector('.tab-title')?.textContent || `Tab ${tabId}`, true);
+}
+
+function sortGrid() {
+  const cards = [...grid.querySelectorAll('.tab-card')];
+  cards.sort((a, b) => {
+    const aAttached = a.dataset.attached === 'true' ? 0 : 1;
+    const bAttached = b.dataset.attached === 'true' ? 0 : 1;
+    return aAttached - bAttached;
+  });
+  for (const card of cards) grid.appendChild(card);
+}
+
+function getWorkspaceTabInfo() {
+  if (!currentTaskGroup) return [];
+  const tabInfo = [];
+  for (const tabId of currentTaskGroup.tabIds) {
+    const entry = tabs[tabId];
+    if (!entry || !entry.isUserTab) continue;
+    const info = { id: tabId, title: 'Unknown', url: '' };
+    if (entry.webview) {
+      try { info.url = entry.webview.getURL(); } catch (_) {}
+      try {
+        const title = entry.sidebarTab?.querySelector('.tab-title')?.textContent;
+        if (title) info.title = title;
+      } catch (_) {}
+    }
+    tabInfo.push(info);
+  }
+  return tabInfo;
 }
 
 logToggle.addEventListener('click', () => {
@@ -84,12 +101,32 @@ logToggle.addEventListener('click', () => {
 });
 logResizeHandle.style.display = 'none';
 
-chatSendBtn.addEventListener('click', () => {
+chatSendBtn.addEventListener('click', async () => {
   const text = chatInput.value.trim();
   if (!text) return;
-  window.vroom.sendLog(text);
   appendChatMessage('You', text, true);
   chatInput.value = '';
+
+  if (workspaceActive && !firstMessageSent) {
+    // First message triggers extractor
+    const tabInfo = getWorkspaceTabInfo();
+    window.vroom.sendTask(text, tabInfo.length > 0 ? tabInfo : undefined);
+    firstMessageSent = true;
+    currentTaskText = text;
+    addToTaskHistory(text);
+
+    // Update task group label
+    if (currentTaskGroup) {
+      const label = currentTaskGroup.el.querySelector('.task-group-label');
+      if (label) {
+        label.textContent = text.length > 35 ? text.substring(0, 35) + '...' : text;
+        label.title = text;
+      }
+    }
+    chatInput.placeholder = 'Message extractor...';
+  } else {
+    window.vroom.sendLog(text);
+  }
 });
 
 chatInput.addEventListener('keydown', (e) => {
@@ -478,70 +515,19 @@ urlBar.addEventListener('keydown', (e) => {
   }
 });
 
-runBtn.addEventListener('click', async () => {
-  const text = taskInput.value.trim();
-  if (!text) return;
+newTaskBtn2.addEventListener('click', () => {
   if (audioCtx.state === 'suspended') audioCtx.resume();
 
-  let tabInfo = undefined;
-  if (attachedTabIds.length > 0) {
-    tabInfo = [];
-    for (const tabId of attachedTabIds) {
-      const entry = tabs[tabId];
-      const info = { id: tabId, title: 'Unknown', url: '' };
-      if (entry && entry.webview) {
-        try { info.url = entry.webview.getURL(); } catch (_) {}
-        try {
-          const title = entry.sidebarTab?.querySelector('.tab-title')?.textContent;
-          if (title) info.title = title;
-        } catch (_) {}
-        // Capture screenshot via main process CDP
-        try {
-          const b64 = await window.vroom.captureTab(tabId);
-          if (b64) info.screenshot = b64;
-        } catch (_) {}
-      }
-      tabInfo.push(info);
-    }
-  }
+  createTaskGroup('New Task');
+  switchToGrid();
+  emptyState.style.display = 'none';
+  chatSidebar.classList.remove('hidden');
+  pauseBtn.classList.remove('hidden');
 
-  window.vroom.sendTask(text, tabInfo);
-  runBtn.disabled = true;
-  currentTaskText = text;
-  log('Task: ' + text + (attachedTabIds.length > 0 ? ` [with tabs: ${attachedTabIds.join(', ')}]` : ''));
-  addToTaskHistory(text);
-  createTaskGroup(text);
-  taskInput.value = '';
-  taskInput.style.height = 'auto';
-  attachedTabIds.length = 0;
-  renderAttachedTabs();
-});
-
-taskInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    runBtn.click();
-  } else if (e.key === 'ArrowUp' && taskHistoryList.length > 0) {
-    e.preventDefault();
-    if (historyIndex === -1) savedDraft = taskInput.value;
-    if (historyIndex < taskHistoryList.length - 1) {
-      historyIndex++;
-      taskInput.value = taskHistoryList[historyIndex].text;
-      taskInput.style.height = 'auto';
-      taskInput.style.height = Math.min(taskInput.scrollHeight, 160) + 'px';
-    }
-  } else if (e.key === 'ArrowDown' && historyIndex >= 0) {
-    e.preventDefault();
-    historyIndex--;
-    taskInput.value = historyIndex >= 0 ? taskHistoryList[historyIndex].text : savedDraft;
-    taskInput.style.height = 'auto';
-    taskInput.style.height = Math.min(taskInput.scrollHeight, 160) + 'px';
-  }
-});
-
-taskInput.addEventListener('input', () => {
-  taskInput.style.height = 'auto';
-  taskInput.style.height = Math.min(taskInput.scrollHeight, 160) + 'px';
+  workspaceActive = true;
+  firstMessageSent = false;
+  chatInput.placeholder = 'Describe your task...';
+  chatInput.focus();
 });
 
 function switchToTab(tabId) {
@@ -596,6 +582,11 @@ window.vroom.onMessage((msg) => {
       nextAgentId = spawnMatch[1];
     }
 
+    // Show extractor messages in chat
+    if (msg.message.startsWith('Extractor: ')) {
+      appendChatMessage('Extractor', msg.message.substring(11), false);
+    }
+
     // Handle spawn on existing tab — move it into the current task group and create a grid card
     const spawnOnTabMatch = msg.message.match(/Spawned executor (exec_\d+) on tab (-?\d+): (.+)/);
     if (spawnOnTabMatch) {
@@ -612,6 +603,12 @@ window.vroom.onMessage((msg) => {
         // Create a grid card if this tab doesn't have one (user tabs)
         if (!tabs[existingTabId].card) {
           createGridCard(existingTabId, spawnOnTabMatch[3]);
+        }
+        // Mark as attached and sort
+        if (tabs[existingTabId].card) {
+          tabs[existingTabId].card.dataset.attached = 'true';
+          tabs[existingTabId].card.classList.remove('unattached');
+          sortGrid();
         }
       }
     }
@@ -652,7 +649,9 @@ window.vroom.onMessage((msg) => {
 
   } else if (msg.type === 'complete') {
     statusText.textContent = 'Complete';
-    runBtn.disabled = false;
+    workspaceActive = false;
+    firstMessageSent = false;
+    chatInput.placeholder = 'Message agents...';
     log('Complete: ' + msg.summary, true);
     if (currentTaskText) {
       updateTaskHistoryStatus(currentTaskText, 'success');
@@ -900,6 +899,7 @@ function createTabCard(tabId, task) {
   // Grid card
   const card = document.createElement('div');
   card.className = 'tab-card active';
+  card.dataset.attached = 'true';
 
   const header = document.createElement('div');
   header.className = 'card-header';
@@ -955,13 +955,14 @@ function createTabCard(tabId, task) {
   };
 }
 
-function createGridCard(tabId, task) {
+function createGridCard(tabId, task, unattached = false) {
   emptyState.style.display = 'none';
   chatSidebar.classList.remove('hidden');
   pauseBtn.classList.remove('hidden');
 
   const card = document.createElement('div');
-  card.className = 'tab-card active';
+  card.className = 'tab-card active' + (unattached ? ' unattached' : '');
+  card.dataset.attached = unattached ? 'false' : 'true';
 
   const header = document.createElement('div');
   header.className = 'card-header';
@@ -1315,7 +1316,7 @@ function renderHomePage() {
   const page = document.createElement('div');
   page.className = 'home-page';
 
-  // Center: logo + prompt
+  // Center: logo
   const center = document.createElement('div');
   center.className = 'home-center';
 
@@ -1323,37 +1324,7 @@ function renderHomePage() {
   logo.className = 'home-logo';
   logo.src = 'logo.png';
 
-  const promptRow = document.createElement('div');
-  promptRow.className = 'home-prompt-row';
-
-  const promptInput = document.createElement('input');
-  promptInput.className = 'home-prompt-input';
-  promptInput.type = 'text';
-  promptInput.placeholder = 'describe a task...';
-
-  const homeRunBtn = document.createElement('button');
-  homeRunBtn.className = 'home-run-btn';
-  homeRunBtn.textContent = 'Run';
-
-  homeRunBtn.addEventListener('click', () => {
-    const text = promptInput.value.trim();
-    if (!text) return;
-    taskInput.value = text;
-    runBtn.click();
-    promptInput.value = '';
-  });
-
-  promptInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      homeRunBtn.click();
-    }
-  });
-
-  promptRow.appendChild(promptInput);
-  promptRow.appendChild(homeRunBtn);
   center.appendChild(logo);
-  center.appendChild(promptRow);
   page.appendChild(center);
 
   // Columns
@@ -1400,6 +1371,12 @@ function renderHomePage() {
     meta.appendChild(time);
     card.appendChild(text);
     card.appendChild(meta);
+    card.style.cursor = 'pointer';
+    card.addEventListener('click', () => {
+      newTaskBtn2.click();
+      chatInput.value = task.text;
+      chatInput.focus();
+    });
     taskList.appendChild(card);
   }
 
