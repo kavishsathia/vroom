@@ -11,28 +11,65 @@ CHANNELS = 1
 BYTES_PER_SECOND = SAMPLE_RATE * SAMPLE_WIDTH * CHANNELS  # 48000
 
 
+AGENT_POOL = [
+    {"name": "Alice", "voice": "Kore"},
+    {"name": "Bob", "voice": "Puck"},
+    {"name": "Carol", "voice": "Aoede"},
+    {"name": "Dave", "voice": "Orus"},
+    {"name": "Eve", "voice": "Leda"},
+    {"name": "Frank", "voice": "Fenrir"},
+    {"name": "Grace", "voice": "Sadachbia"},
+    {"name": "Hank", "voice": "Achird"},
+]
+
+
 class Multiplexer:
-    def __init__(self, on_message=None, on_audio=None, on_state_change=None, on_clear_audio=None, voice="Kore"):
+    def __init__(self, on_message=None, on_audio_chunk=None, on_state_change=None, on_clear_audio=None):
         self.conversation = []  # [{agent_id, message, timestamp}]
         self.read_pointers = {}  # agent_id -> int
         self._spotlight = None  # agent_id currently generating TTS
         self._audio_free_at = 0  # monotonic time when current audio finishes
         self._on_message = on_message  # callback(agent_id, message)
-        self._on_audio = on_audio  # async callback(agent_id, audio_b64, duration)
-        self._on_state_change = on_state_change  # async callback(agent_id, state)
+        # async callback(agent_id, audio_b64, done)
+        self._on_audio_chunk = on_audio_chunk
+        # async callback(agent_id, state)
+        self._on_state_change = on_state_change
         self._on_clear_audio = on_clear_audio  # async callback()
-        self._voice = voice
+        self._agent_voices = {}  # agent_id -> voice name
+        self._current_voice = None  # voice of the current Live session
+        self._agent_pool_index = 0
         self._client = genai.Client()
+        self._live_session = None
+        self._live_lock = asyncio.Lock()
         self._resume_event = asyncio.Event()
         self._resume_event.set()  # starts unpaused
-        self._preempt_event = asyncio.Event()  # set when preempt fires, to cancel sleeps
-        self._pending_user_audio = []  # [(audio_bytes, mime_type)] buffered for extractor
+        # set when preempt fires, to cancel sleeps
+        self._preempt_event = asyncio.Event()
+        self._stream_task = None  # task running try_speak, cancelled on preempt
+        # [(audio_bytes, mime_type)] buffered for extractor
+        self._pending_user_audio = []
 
-    def register(self, agent_id):
+    def next_agent(self):
+        """Get the next agent name/voice from the pool."""
+        info = AGENT_POOL[self._agent_pool_index % len(AGENT_POOL)]
+        self._agent_pool_index += 1
+        return info["name"], info["voice"]
+
+    def register(self, agent_id, voice=None):
         self.read_pointers[agent_id] = len(self.conversation)
+        if voice:
+            self._agent_voices[agent_id] = voice
 
     def unregister(self, agent_id):
         self.read_pointers.pop(agent_id, None)
+
+    def has_unread(self, agent_id):
+        """Check if there are unread messages/audio for an agent (without consuming)."""
+        pointer = self.read_pointers.get(agent_id, 0)
+        for m in self.conversation[pointer:]:
+            if m["agent_id"] != agent_id:
+                return True
+        return False
 
     def get_context(self, agent_id):
         """Get unread messages/audio for an agent."""
@@ -47,24 +84,25 @@ class Multiplexer:
             if m["agent_id"] == "user" and "audio_bytes" in m:
                 audio_parts.append((m["audio_bytes"], m["mime_type"]))
             elif "message" in m:
-                messages.append({"agent": m["agent_id"], "message": m["message"]})
+                messages.append(
+                    {"agent": m["agent_id"], "message": m["message"]})
         return {
             "unread_messages": messages,
             "user_audio": audio_parts,
         }
 
     async def try_speak(self, agent_id, message):
-        """Try to claim spotlight and speak. Returns (success, None).
-        Spotlight covers TTS generation only. While previous audio plays,
-        one agent can generate TTS in parallel. A third agent is rejected."""
+        """Try to claim spotlight and speak with streaming TTS.
+        Returns (success, None)."""
         if not self._resume_event.is_set():
             print(f"[mux] {agent_id} rejected — pipeline is paused")
             return False, None
         if self._spotlight is not None:
-            print(f"[mux] {agent_id} rejected — {self._spotlight} is generating TTS")
+            print(
+                f"[mux] {agent_id} rejected — {self._spotlight} is generating TTS")
             return False, None
 
-        # Claim spotlight (for TTS generation)
+        # Claim spotlight
         self._spotlight = agent_id
         print(f"[mux] Spotlight -> {agent_id}")
         if self._on_state_change:
@@ -79,18 +117,14 @@ class Multiplexer:
         if self._on_message:
             self._on_message(agent_id, message)
 
-        # Generate TTS (can overlap with previous audio playback)
         try:
-            audio_bytes, duration = await self._generate_tts(message)
-            audio_b64 = base64.b64encode(audio_bytes).decode()
-            print(f"[mux] TTS for {agent_id}: {duration:.1f}s")
-
-            # Wait for previous audio to finish before sending ours
+            # Wait for previous audio to finish before streaming ours
             loop = asyncio.get_event_loop()
             now = loop.time()
             if self._audio_free_at > now:
                 wait = self._audio_free_at - now
-                print(f"[mux] Waiting {wait:.1f}s for previous audio to finish")
+                print(
+                    f"[mux] Waiting {wait:.1f}s for previous audio to finish")
                 if await self._interruptible_sleep(wait):
                     print(f"[mux] {agent_id} interrupted during audio wait")
                     self._spotlight = None
@@ -98,29 +132,61 @@ class Multiplexer:
                         await self._on_state_change(agent_id, "idle")
                     return True, None
 
-            # Don't send audio if we got preempted during TTS generation
             if not self._resume_event.is_set():
-                print(f"[mux] {agent_id} audio discarded — pipeline paused during TTS")
+                print(f"[mux] {agent_id} audio discarded — pipeline paused")
                 self._spotlight = None
                 if self._on_state_change:
                     await self._on_state_change(agent_id, "idle")
                 return True, None
 
-            # Send audio and track when it finishes
-            if self._on_audio:
-                await self._on_audio(agent_id, audio_b64, duration)
-            self._audio_free_at = asyncio.get_event_loop().time() + duration
+            # Stream TTS — run as a task so preempt() can cancel it
+            cancelled = False
+            try:
+                self._stream_task = asyncio.current_task()
+                total_bytes = 0
+                chunk_count = 0
+                stream_start = time.monotonic()
+                async for chunk_bytes in self._stream_tts(message):
+                    chunk_count += 1
+                    if chunk_count == 1:
+                        ttfb = (time.monotonic() - stream_start) * 1000
+                        print(
+                            f"[mux] {agent_id} TTFB: {ttfb:.0f}ms ({len(chunk_bytes)} bytes)")
+                    chunk_b64 = base64.b64encode(chunk_bytes).decode()
+                    total_bytes += len(chunk_bytes)
+                    if self._on_audio_chunk:
+                        await self._on_audio_chunk(agent_id, chunk_b64, False)
+            except asyncio.CancelledError:
+                cancelled = True
+                print(
+                    f"[mux] {agent_id} stream cancelled at chunk {chunk_count}")
+            finally:
+                self._stream_task = None
 
-            # Release spotlight — next agent can start generating TTS
-            self._spotlight = None
-            print(f"[mux] Spotlight released by {agent_id}")
+            total_duration = total_bytes / BYTES_PER_SECOND
+            stream_elapsed = (time.monotonic() - stream_start) * 1000
+            print(
+                f"[mux] TTS stream for {agent_id}: {total_duration:.1f}s audio, {stream_elapsed:.0f}ms wall, {chunk_count} chunks, cancelled={cancelled}")
 
-            # Block this agent until its own audio finishes playing
-            await self._interruptible_sleep(duration)
-
-            # Now that audio is done, tell frontend to clear the indicator
-            if self._on_state_change:
-                await self._on_state_change(agent_id, "idle")
+            if cancelled:
+                # Reset Live session to discard buffered audio
+                await self._reset_live_session()
+                self._audio_free_at = 0
+                self._spotlight = None
+                print(f"[mux] Spotlight released by {agent_id} (preempted)")
+                if self._on_state_change:
+                    await self._on_state_change(agent_id, "idle")
+            else:
+                # Send done signal
+                if self._on_audio_chunk:
+                    await self._on_audio_chunk(agent_id, "", True)
+                self._audio_free_at = loop.time() + total_duration
+                self._spotlight = None
+                print(f"[mux] Spotlight released by {agent_id}")
+                # Don't block — let the agent pre-generate its next message
+                # while audio plays. Next try_speak() will wait via _audio_free_at.
+                if self._on_state_change:
+                    await self._on_state_change(agent_id, "idle")
         except Exception as e:
             print(f"[mux] TTS error: {e}")
             self._spotlight = None
@@ -129,36 +195,73 @@ class Multiplexer:
 
         return True, None
 
-    async def _generate_tts(self, text, retries=3):
-        """Generate TTS audio and return (audio_bytes, duration_seconds)."""
+    async def _reset_live_session(self):
+        """Close the Live API session to discard any buffered audio."""
+        if self._live_session:
+            try:
+                await self._live_ctx.__aexit__(None, None, None)
+            except Exception:
+                pass
+            self._live_session = None
+            self._live_ctx = None
+            print("[mux] Live session reset (preempt cleanup)")
+
+    async def _get_live_session(self):
+        """Get or create a persistent Live API session for TTS."""
+        if self._live_session is None:
+            config = {
+                "response_modalities": ["AUDIO"],
+                "system_instruction": "You are a text-to-speech engine. Your ONLY job is to speak the exact text the user provides. Do not paraphrase, summarize, comment on, or add anything. Just say the words exactly as given, in a cheerful tone.",
+                "speech_config": {
+                    "voice_config": {
+                        "prebuilt_voice_config": {"voice_name": self._voice}
+                    },
+                },
+            }
+            self._live_ctx = self._client.aio.live.connect(
+                model="gemini-2.5-flash-native-audio-preview-12-2025",
+                config=config,
+            )
+            self._live_session = await self._live_ctx.__aenter__()
+            print(f"[mux] Live API session created (voice={self._voice})")
+        return self._live_session
+
+    async def _stream_tts(self, text, retries=3):
+        """Stream TTS audio chunks via Live API."""
         for attempt in range(retries):
             try:
-                response = await self._client.aio.models.generate_content(
-                    model="gemini-2.5-flash-preview-tts",
-                    contents=[{"parts": [{"text": f"Say cheerfully: {text}"}]}],
-                    config=types.GenerateContentConfig(
-                        response_modalities=["AUDIO"],
-                        speech_config=types.SpeechConfig(
-                            voice_config=types.VoiceConfig(
-                                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                    voice_name=self._voice
-                                ),
-                            ),
+                async with self._live_lock:
+                    session = await self._get_live_session()
+                    await session.send_client_content(
+                        turns=types.Content(
+                            role="user",
+                            parts=[types.Part(
+                                text=f"Repeat this exactly: {text}")],
                         ),
-                    ),
-                )
-                candidate = response.candidates[0]
-                if not candidate.content or not candidate.content.parts:
-                    raise ValueError(f"Empty TTS response (finish_reason={getattr(candidate, 'finish_reason', 'unknown')})")
-                audio_data = candidate.content.parts[0].inline_data.data
-                if isinstance(audio_data, str):
-                    audio_bytes = base64.b64decode(audio_data)
-                else:
-                    audio_bytes = audio_data
-                duration = len(audio_bytes) / BYTES_PER_SECOND
-                return audio_bytes, duration
+                        turn_complete=True,
+                    )
+                    async for response in session.receive():
+                        if response.server_content and response.server_content.model_turn:
+                            for part in response.server_content.model_turn.parts:
+                                if part.inline_data and part.inline_data.data:
+                                    audio_data = part.inline_data.data
+                                    if isinstance(audio_data, str):
+                                        yield base64.b64decode(audio_data)
+                                    else:
+                                        yield audio_data
+                        if response.server_content and response.server_content.turn_complete:
+                            break
+                return  # success
             except Exception as e:
-                print(f"[mux] TTS attempt {attempt + 1}/{retries} failed: {e}")
+                print(
+                    f"[mux] Live TTS attempt {attempt + 1}/{retries} failed: {e}")
+                if self._live_ctx:
+                    try:
+                        await self._live_ctx.__aexit__(None, None, None)
+                    except Exception:
+                        pass
+                self._live_session = None
+                self._live_ctx = None
                 if attempt < retries - 1:
                     await asyncio.sleep(1)
                 else:
@@ -174,12 +277,16 @@ class Multiplexer:
             return False  # completed naturally
 
     async def preempt(self):
-        """Pause all agents, clear audio."""
+        """Pause all agents, clear audio, cancel active TTS stream."""
         print(f"[mux] PREEMPT: pausing pipeline")
         self._resume_event.clear()
         self._spotlight = None
         self._audio_free_at = 0
         self._preempt_event.set()  # interrupt any sleeping agents
+        # Cancel the active TTS stream task immediately
+        if self._stream_task and not self._stream_task.done():
+            self._stream_task.cancel()
+            print(f"[mux] Cancelled stream task")
         if self._on_clear_audio:
             await self._on_clear_audio()
 

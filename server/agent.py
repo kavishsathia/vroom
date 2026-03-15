@@ -16,6 +16,7 @@ Analyze the screenshot and respond with a single JSON action:
 - {"action": "type", "text": "<string>"} — type text into the currently focused element
 - {"action": "navigate", "url": "<url>"} — navigate to a specific URL
 - {"action": "scroll", "direction": "up|down"} — scroll the page
+- {"action": "wait"} — do nothing and wait for messages from other agents. Use this when you are waiting for another agent to act before you can proceed.
 - {"action": "speak", "message": "<string>"} — say something to the user. Keep it to 1 sentence.
 - {"action": "done", "summary": "<string>"} — task is complete
 
@@ -70,12 +71,15 @@ class Agent:
                 self.multiplexer.unregister(self.agent_id)
 
     async def _run_loop(self, task, history, max_steps):
-        self._speech_rejected = False
         for step in range(max_steps):
             if self.multiplexer:
                 await self.multiplexer.wait_if_paused()
+            import time as _time
+            _step_start = _time.monotonic()
             print(f"[agent:{self.tab_id}] Step {step + 1}/{max_steps} for: {task}")
+            _t0 = _time.monotonic()
             screenshot_b64 = await self.server.request_screenshot(self.tab_id)
+            _t1 = _time.monotonic()
             raw_bytes = base64.b64decode(screenshot_b64)
             img = Image.open(io.BytesIO(raw_bytes))
             vw = img.width // 2
@@ -84,6 +88,8 @@ class Agent:
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=70)
             screenshot_bytes = buf.getvalue()
+            _t2 = _time.monotonic()
+            print(f"[agent:{self.tab_id}] screenshot: {(_t1-_t0)*1000:.0f}ms, resize: {(_t2-_t1)*1000:.0f}ms")
 
             text = (
                 f"Task: {task}\n\nThis is the current page. What is the next action?"
@@ -95,9 +101,6 @@ class Agent:
             extra_parts = []
             if self.multiplexer:
                 ctx = self.multiplexer.get_context(self.agent_id)
-                if self._speech_rejected:
-                    text += "\n\nYour speech was rejected — another agent is speaking right now. Try again later."
-                    self._speech_rejected = False
                 if ctx["unread_messages"]:
                     text += "\n\nRecent messages from other agents:"
                     for msg in ctx["unread_messages"]:
@@ -124,6 +127,7 @@ class Agent:
                 )
             )
 
+            _t3 = _time.monotonic()
             response = await self.client.aio.models.generate_content(
                 model="gemini-3-flash-preview",
                 contents=history,
@@ -132,6 +136,8 @@ class Agent:
                     response_mime_type="application/json",
                 ),
             )
+            _t4 = _time.monotonic()
+            print(f"[agent:{self.tab_id}] inference: {(_t4-_t3)*1000:.0f}ms, total step: {(_t4-_step_start)*1000:.0f}ms")
 
             response_text = response.text
             print(f"[agent:{self.tab_id}] Model response: {response_text}")
@@ -160,8 +166,31 @@ class Agent:
                         print(f"[agent:{self.tab_id}] Spoke: {message}")
                         await self.server.send_status(f"[Tab {self.tab_id}] Spoke: {message}")
                     else:
-                        self._speech_rejected = True
                         print(f"[agent:{self.tab_id}] Speech rejected — channel busy")
+                        # Tell the model its message didn't go through
+                        history.append(types.Content(
+                            role="user",
+                            parts=[types.Part(text="Your speech was rejected — another agent is currently speaking. Your message was NOT delivered. Retry the same message later when the channel is free.")],
+                        ))
+                continue
+
+            if action["action"] == "wait":
+                print(f"[agent:{self.tab_id}] Waiting for messages...")
+                await asyncio.sleep(2)
+                # Feed back only unread messages — no screenshot, no heavy prompt
+                if self.multiplexer:
+                    ctx = self.multiplexer.get_context(self.agent_id)
+                    wait_text = "You waited. "
+                    if ctx["unread_messages"]:
+                        wait_text += "New messages from other agents:"
+                        for msg in ctx["unread_messages"]:
+                            wait_text += f"\n- [{msg['agent']}]: {msg['message']}"
+                    else:
+                        wait_text += "No new messages yet."
+                    history.append(types.Content(
+                        role="user",
+                        parts=[types.Part(text=wait_text)],
+                    ))
                 continue
 
             if action["action"] == "done":

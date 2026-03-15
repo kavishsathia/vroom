@@ -511,6 +511,10 @@ window.vroom.onMessage((msg) => {
       }
     }
 
+  } else if (msg.type === 'audio_chunk') {
+    if (msg.data) queueAudioChunk(msg.data, msg.agentId);
+    if (msg.done) log(`[${msg.agentId}] Speech complete`);
+
   } else if (msg.type === 'audio') {
     playAudio(msg.data, msg.agentId);
 
@@ -926,20 +930,43 @@ function createUserTab(url = 'https://www.google.com') {
 
 const audioCtx = new AudioContext();
 const activeSources = new Set();
+let audioNextTime = 0; // scheduled time for next chunk
 
-async function playAudio(b64Data, agentId) {
-  if (audioCtx.state === 'suspended') await audioCtx.resume();
-
+function decodePCM(b64Data) {
   const raw = atob(b64Data);
   const bytes = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-
   const samples = new Float32Array(bytes.length / 2);
   const view = new DataView(bytes.buffer);
   for (let i = 0; i < samples.length; i++) {
     samples[i] = view.getInt16(i * 2, true) / 32768;
   }
+  return samples;
+}
 
+function queueAudioChunk(b64Data, agentId) {
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+
+  const samples = decodePCM(b64Data);
+  const buffer = audioCtx.createBuffer(1, samples.length, 24000);
+  buffer.getChannelData(0).set(samples);
+
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(audioCtx.destination);
+  source.onended = () => activeSources.delete(source);
+  activeSources.add(source);
+
+  const now = audioCtx.currentTime;
+  if (audioNextTime < now) audioNextTime = now;
+  source.start(audioNextTime);
+  audioNextTime += buffer.duration;
+}
+
+async function playAudio(b64Data, agentId) {
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+  const samples = decodePCM(b64Data);
   const buffer = audioCtx.createBuffer(1, samples.length, 24000);
   buffer.getChannelData(0).set(samples);
 
@@ -958,6 +985,7 @@ function stopAllAudio() {
     try { source.stop(); } catch (_) {}
   }
   activeSources.clear();
+  audioNextTime = 0;
 }
 
 // --- Unmute / Push-to-talk ---

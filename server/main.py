@@ -16,7 +16,7 @@ class VroomServer:
         self._request_counter = 0
         self.multiplexer = Multiplexer(
             on_message=self._on_agent_message,
-            on_audio=self._on_agent_audio,
+            on_audio_chunk=self._on_agent_audio_chunk,
             on_state_change=self._on_agent_state_change,
             on_clear_audio=self._on_clear_audio,
         )
@@ -34,13 +34,13 @@ class VroomServer:
             "state": state,
         }))
 
-    async def _on_agent_audio(self, agent_id, audio_b64, duration):
-        """Called when TTS audio is ready — send to frontend for playback."""
+    async def _on_agent_audio_chunk(self, agent_id, audio_b64, done):
+        """Called for each streamed TTS chunk — send to frontend for playback."""
         await self.ws.send(json.dumps({
-            "type": "audio",
+            "type": "audio_chunk",
             "agentId": agent_id,
             "data": audio_b64,
-            "duration": duration,
+            "done": done,
         }))
 
     async def _on_clear_audio(self):
@@ -80,8 +80,9 @@ class VroomServer:
                     await self.multiplexer.preempt()
                     await self.send_status("User is speaking...")
                 elif data["type"] == "preempt_end":
-                    self.multiplexer.resume()
-                    await self.send_status("User finished speaking")
+                    # Don't resume here — wait for preempt_audio so agents
+                    # see the user's audio on their very first step after waking.
+                    await self.send_status("Processing audio...")
                 elif data["type"] == "preempt_audio":
                     asyncio.create_task(self._handle_preempt_audio(data["data"], data.get("mimeType", "audio/webm")))
 
