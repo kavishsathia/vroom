@@ -1,0 +1,1 @@
+- [feedback_no_emojis.md](feedback_no_emojis.md) — No emojis in files or output
