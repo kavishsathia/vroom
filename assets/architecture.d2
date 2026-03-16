@@ -1,0 +1,104 @@
+direction: down
+
+title: {
+  label: Vroom Architecture
+  near: top-center
+  shape: text
+  style.font-size: 28
+  style.bold: true
+}
+
+# ── User ──
+user: User {
+  shape: person
+  style.fill: "#E8F5E9"
+}
+
+# ── Electron ──
+electron: Electron App {
+  style.fill: "#E3F2FD"
+  style.border-radius: 8
+
+  direction: right
+  mic: "🎤 Microphone" {shape: oval; style.fill: "#C8E6C9"}
+  renderer: Renderer {style.fill: "#BBDEFB"}
+  tabs: "Browser Tabs (WebViews)" {style.fill: "#BBDEFB"}
+}
+
+# ── Server ──
+server: Python Server (WebSocket) {
+  style.fill: "#FFF3E0"
+  style.border-radius: 8
+
+  session: Session Layer {style.fill: "#FFE0B2"}
+
+  coordinator: "Coordinator\n(Task Decomposition)" {style.fill: "#FFCC80"}
+
+  agents: {
+    direction: right
+    label: Parallel Agents
+    style.fill: "#FFE0B2"
+    a1: "Alice" {style.fill: "#FFCC80"}
+    a2: "Bob" {style.fill: "#FFCC80"}
+    a3: "Carol" {style.fill: "#FFCC80"}
+  }
+
+  mux: "Multiplexer\n(Voice + Barge-in)" {style.fill: "#FFCC80"}
+}
+
+# ── Gemini ──
+gemini: Gemini APIs (google-genai SDK) {
+  style.fill: "#F3E5F5"
+  style.border-radius: 8
+  direction: right
+  flash: "Gemini 3 Flash\n(Vision + Tools)" {style.fill: "#CE93D8"}
+  live: "Gemini 2.5 Flash\nNative Audio\n(Streaming TTS)" {style.fill: "#CE93D8"}
+}
+
+# ── Database ──
+db: "PostgreSQL\n(Users, Skills, Tasks, Contracts)" {
+  shape: cylinder
+  style.fill: "#E0F2F1"
+}
+
+# ── Google Cloud ──
+gcloud: Google Cloud Platform {
+  style.fill: "#FCE4EC"
+  style.border-radius: 8
+  direction: right
+  run: Cloud Run {style.fill: "#F8BBD0"}
+  registry: Artifact Registry {style.fill: "#F8BBD0"}
+  oauth: Google OAuth {style.fill: "#F8BBD0"}
+}
+
+# ── Connections ──
+
+# User → Electron
+user -> electron.mic: Voice {style.stroke: "#4CAF50"; style.stroke-width: 2}
+user -> electron.renderer: Text task {style.stroke: "#2196F3"}
+electron.tabs -> user: Visual feedback {style.stroke: "#9E9E9E"}
+
+# Electron → Server
+electron.renderer -> server.session: WebSocket {style.stroke: "#FF9800"; style.stroke-width: 3}
+electron.mic -> server.mux: "User audio (barge-in)" {style.stroke: "#4CAF50"; style.stroke-width: 2}
+
+# Server internal
+server.session -> server.coordinator: Task {style.stroke: "#FF9800"}
+server.coordinator -> server.agents: Subtasks {style.stroke: "#FF9800"; style.stroke-width: 2}
+server.agents -> server.mux: Speak / Log {style.stroke: "#9C27B0"}
+server.mux -> electron.renderer: Audio stream {style.stroke: "#4CAF50"; style.stroke-width: 2}
+
+# Agents ↔ Tabs
+server.agents -> electron.tabs: "Screenshots ↔ Actions" {style.stroke: "#2196F3"; style.stroke-dash: 3}
+
+# Server → Gemini
+server.coordinator -> gemini.flash: Task planning {style.stroke: "#7B1FA2"; style.stroke-width: 2}
+server.agents -> gemini.flash: "Screenshot → Action" {style.stroke: "#7B1FA2"; style.stroke-width: 2}
+server.mux -> gemini.live: "Text → Speech" {style.stroke: "#7B1FA2"; style.stroke-width: 2}
+
+# Server → DB
+server.session -> db: CRUD {style.stroke: "#009688"}
+
+# Google Cloud
+gcloud.oauth -> server.session: Auth {style.stroke: "#E91E63"; style.stroke-dash: 5}
+gcloud.run -> server: Hosts {style.stroke: "#E91E63"; style.stroke-dash: 5}
