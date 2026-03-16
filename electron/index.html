@@ -307,10 +307,11 @@
       padding: 12px;
       border-bottom: 1px solid var(--border);
       display: flex;
+      flex-direction: column;
       gap: 6px;
     }
     .sidebar .task-section .new-task-btn {
-      flex: 1;
+      width: 100%;
       padding: 7px 0;
       border: none;
       border-radius: 8px;
@@ -323,8 +324,13 @@
       transition: background 0.15s;
     }
     .sidebar .task-section .new-task-btn:hover { background: var(--btn-hover); }
-    .sidebar .task-section .log-btn {
-      flex: 0 0 auto;
+    .sidebar .task-section .btn-row {
+      display: flex;
+      gap: 6px;
+    }
+    .sidebar .task-section .log-btn,
+    .sidebar .task-section .skills-btn {
+      flex: 1;
       padding: 7px 12px;
       border: none;
       border-radius: 8px;
@@ -336,7 +342,8 @@
       cursor: pointer;
       transition: background 0.15s;
     }
-    .sidebar .task-section .log-btn:hover { background: var(--sidebar-hover); }
+    .sidebar .task-section .log-btn:hover,
+    .sidebar .task-section .skills-btn:hover { background: var(--sidebar-hover); }
     /* Task group */
     @keyframes pulse {
       0%, 100% { opacity: 1; }
@@ -1343,6 +1350,199 @@
     }
     .settings-gear:hover { color: var(--text); background: var(--sidebar-hover); }
 
+    /* Skills modal */
+    .skills-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(0, 0, 0, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-app-region: no-drag;
+    }
+    .skills-overlay.hidden { display: none; }
+    .skills-modal {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: 640px;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .skills-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .skills-header span {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .skills-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .skills-add-btn {
+      padding: 5px 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--btn-bg);
+      color: var(--btn-text);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .skills-add-btn:hover { background: var(--btn-hover); }
+    .skills-close {
+      background: none;
+      border: none;
+      color: var(--text-tertiary);
+      font-size: 20px;
+      cursor: pointer;
+      padding: 0 4px;
+      line-height: 1;
+    }
+    .skills-close:hover { color: var(--text); }
+    .skills-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0;
+    }
+    .skills-empty {
+      padding: 40px 20px;
+      text-align: center;
+      color: var(--text-tertiary);
+      font-size: 13px;
+    }
+    .skill-item {
+      border-bottom: 1px solid var(--border-subtle);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .skill-item:last-child { border-bottom: none; }
+    .skill-item:hover { background: var(--bg-secondary); }
+    .skill-item-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+    }
+    .skill-item-info { flex: 1; min-width: 0; }
+    .skill-item-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 2px;
+    }
+    .skill-item-desc {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .skill-item-actions {
+      display: flex;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .skill-item-btn {
+      background: none;
+      border: none;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .skill-item-btn:hover { background: var(--input-bg); color: var(--text); }
+    .skill-item-btn.delete:hover { color: #e5534b; }
+
+    /* Skill editor (inline expand) */
+    .skill-editor {
+      display: none;
+      padding: 0 20px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .skill-item.expanded .skill-editor { display: block; }
+    .skill-item.expanded { background: var(--bg-secondary); }
+    .skill-editor label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-tertiary);
+      margin-bottom: 4px;
+      margin-top: 10px;
+    }
+    .skill-editor label:first-child { margin-top: 0; }
+    .skill-editor input {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--input-bg);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12px;
+      outline: none;
+    }
+    .skill-editor input:focus { border-color: var(--speech-spotlight); }
+    .skill-editor textarea {
+      width: 100%;
+      min-height: 160px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--input-bg);
+      color: var(--text);
+      font-family: 'SF Mono', 'Consolas', 'Menlo', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      outline: none;
+      resize: vertical;
+    }
+    .skill-editor textarea:focus { border-color: var(--speech-spotlight); }
+    .skill-editor-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .skill-save-btn {
+      padding: 6px 16px;
+      border: none;
+      border-radius: 6px;
+      background: var(--btn-bg);
+      color: var(--btn-text);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .skill-save-btn:hover { background: var(--btn-hover); }
+    .skill-cancel-btn {
+      padding: 6px 16px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: none;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .skill-cancel-btn:hover { background: var(--input-bg); }
   </style>
 </head>
 <body>
@@ -1350,7 +1550,10 @@
     <div class="sidebar">
       <div class="task-section">
         <button class="new-task-btn" id="newTaskBtn2">New Task</button>
-        <button class="log-btn" id="logToggle">Logs</button>
+        <div class="btn-row">
+          <button class="log-btn" id="logToggle">Logs</button>
+          <button class="skills-btn" id="skillsToggle">Skills</button>
+        </div>
       </div>
       <div class="tabs-header">
         <span>Tabs</span>
@@ -1454,6 +1657,22 @@
           </button>
           <div class="settings-error" id="settingsError"></div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Skills Modal -->
+  <div class="skills-overlay hidden" id="skillsOverlay">
+    <div class="skills-modal">
+      <div class="skills-header">
+        <span>Skills</span>
+        <div class="skills-header-actions">
+          <button class="skills-add-btn" id="skillsAddBtn">+ New Skill</button>
+          <button class="skills-close" id="skillsClose">&times;</button>
+        </div>
+      </div>
+      <div class="skills-body" id="skillsBody">
+        <div class="skills-empty">No skills yet. Skills are learned when you teach agents during tasks.</div>
       </div>
     </div>
   </div>

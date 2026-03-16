@@ -94,10 +94,10 @@ async def get_or_create_user(pool, token, email=None, name=None, picture=None):
 async def list_skills(pool, user_id):
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT name, description FROM skills WHERE user_id = $1 ORDER BY name",
+            "SELECT name, description, text FROM skills WHERE user_id = $1 ORDER BY name",
             user_id,
         )
-        return [{"name": r["name"], "description": r["description"]} for r in rows]
+        return [{"name": r["name"], "description": r["description"], "text": r["text"]} for r in rows]
 
 
 async def get_skill(pool, user_id, name):
@@ -117,6 +117,14 @@ async def add_skill(pool, user_id, name, description, text):
                ON CONFLICT (user_id, name)
                DO UPDATE SET description = $3, text = $4, updated_at = now()""",
             user_id, name, description, text,
+        )
+
+
+async def delete_skill(pool, user_id, name):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM skills WHERE user_id = $1 AND name = $2",
+            user_id, name,
         )
 
 

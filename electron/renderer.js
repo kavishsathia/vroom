@@ -28,6 +28,12 @@ const panelChat = document.getElementById('panelChat');
 const panelContracts = document.getElementById('panelContracts');
 const contractsList = document.getElementById('contractsList');
 
+const skillsToggle = document.getElementById('skillsToggle');
+const skillsOverlay = document.getElementById('skillsOverlay');
+const skillsClose = document.getElementById('skillsClose');
+const skillsAddBtn = document.getElementById('skillsAddBtn');
+const skillsBody = document.getElementById('skillsBody');
+
 const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
 const logResizeHandle = document.getElementById('logResizeHandle');
 const sidebar = document.querySelector('.sidebar');
@@ -811,6 +817,12 @@ window.vroom.onMessage((msg) => {
   } else if (msg.type === 'connected') {
     statusDot.classList.add('connected');
     statusText.textContent = 'Connected';
+
+  } else if (msg.type === 'skills_list') {
+    renderSkillsList(msg.skills);
+
+  } else if (msg.type === 'skill_saved') {
+    window.vroom.listSkills();
   }
 });
 
@@ -1640,3 +1652,140 @@ logoutBtn.addEventListener('click', async () => {
   await window.vroom.logout();
   updateAuthUI(null);
 });
+
+// --- Skills panel ---
+
+skillsToggle.addEventListener('click', () => {
+  skillsOverlay.classList.remove('hidden');
+  window.vroom.listSkills();
+});
+
+skillsClose.addEventListener('click', () => {
+  skillsOverlay.classList.add('hidden');
+});
+
+skillsOverlay.addEventListener('click', (e) => {
+  if (e.target === skillsOverlay) skillsOverlay.classList.add('hidden');
+});
+
+skillsAddBtn.addEventListener('click', () => {
+  createSkillEditor(null);
+});
+
+function renderSkillsList(skills) {
+  skillsBody.innerHTML = '';
+  if (!skills || skills.length === 0) {
+    skillsBody.innerHTML = '<div class="skills-empty">No skills yet. Skills are learned when you teach agents during tasks.</div>';
+    return;
+  }
+  skills.forEach(skill => {
+    const item = document.createElement('div');
+    item.className = 'skill-item';
+    item.innerHTML = `
+      <div class="skill-item-header">
+        <div class="skill-item-info">
+          <div class="skill-item-name">${escapeHtml(skill.name)}</div>
+          <div class="skill-item-desc">${escapeHtml(skill.description)}</div>
+        </div>
+        <div class="skill-item-actions">
+          <button class="skill-item-btn edit" title="Edit">Edit</button>
+          <button class="skill-item-btn delete" title="Delete">Delete</button>
+        </div>
+      </div>
+      <div class="skill-editor">
+        <label>Name</label>
+        <input type="text" class="skill-name-input" value="${escapeHtml(skill.name)}" />
+        <label>Description</label>
+        <input type="text" class="skill-desc-input" value="${escapeHtml(skill.description)}" />
+        <label>Content (Markdown)</label>
+        <textarea class="skill-text-input">${escapeHtml(skill.text || '')}</textarea>
+        <div class="skill-editor-actions">
+          <button class="skill-cancel-btn">Cancel</button>
+          <button class="skill-save-btn">Save</button>
+        </div>
+      </div>
+    `;
+
+    const header = item.querySelector('.skill-item-header');
+    const editBtn = item.querySelector('.edit');
+    const deleteBtn = item.querySelector('.delete');
+    const cancelBtn = item.querySelector('.skill-cancel-btn');
+    const saveBtn = item.querySelector('.skill-save-btn');
+
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      item.classList.toggle('expanded');
+    });
+
+    header.addEventListener('click', () => {
+      item.classList.toggle('expanded');
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      item.classList.remove('expanded');
+    });
+
+    saveBtn.addEventListener('click', () => {
+      const name = item.querySelector('.skill-name-input').value.trim();
+      const description = item.querySelector('.skill-desc-input').value.trim();
+      const text = item.querySelector('.skill-text-input').value;
+      if (!name) return;
+      window.vroom.saveSkill(name, description, text);
+      item.classList.remove('expanded');
+    });
+
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      window.vroom.deleteSkill(skill.name);
+    });
+
+    skillsBody.appendChild(item);
+  });
+}
+
+function createSkillEditor(existing) {
+  // Collapse all existing editors
+  skillsBody.querySelectorAll('.skill-item.expanded').forEach(el => el.classList.remove('expanded'));
+
+  const item = document.createElement('div');
+  item.className = 'skill-item expanded';
+  item.innerHTML = `
+    <div class="skill-editor" style="display:block; padding-top:16px;">
+      <label>Name</label>
+      <input type="text" class="skill-name-input" placeholder="e.g. toggle-cloud-run-env-var" />
+      <label>Description</label>
+      <input type="text" class="skill-desc-input" placeholder="How to change an env var on Cloud Run" />
+      <label>Content (Markdown)</label>
+      <textarea class="skill-text-input" placeholder="Step-by-step instructions..."></textarea>
+      <div class="skill-editor-actions">
+        <button class="skill-cancel-btn">Cancel</button>
+        <button class="skill-save-btn">Save</button>
+      </div>
+    </div>
+  `;
+
+  const cancelBtn = item.querySelector('.skill-cancel-btn');
+  const saveBtn = item.querySelector('.skill-save-btn');
+
+  cancelBtn.addEventListener('click', () => {
+    item.remove();
+  });
+
+  saveBtn.addEventListener('click', () => {
+    const name = item.querySelector('.skill-name-input').value.trim();
+    const description = item.querySelector('.skill-desc-input').value.trim();
+    const text = item.querySelector('.skill-text-input').value;
+    if (!name) return;
+    window.vroom.saveSkill(name, description, text);
+    item.remove();
+  });
+
+  skillsBody.prepend(item);
+  item.querySelector('.skill-name-input').focus();
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str || '';
+  return div.innerHTML;
+}

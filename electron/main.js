@@ -405,7 +405,7 @@ async function connectWebSocket() {
         }
       }
 
-    } else if (data.type === 'audio_chunk' || data.type === 'audio' || data.type === 'speech_state' || data.type === 'status' || data.type === 'complete' || data.type === 'clear_audio' || data.type === 'preempt_transcript' || data.type === 'log' || data.type === 'contract_update') {
+    } else if (data.type === 'audio_chunk' || data.type === 'audio' || data.type === 'speech_state' || data.type === 'status' || data.type === 'complete' || data.type === 'clear_audio' || data.type === 'preempt_transcript' || data.type === 'log' || data.type === 'contract_update' || data.type === 'skills_list' || data.type === 'skill_saved') {
       toRenderer(data);
     }
   });
@@ -578,6 +578,24 @@ ipcMain.on('visual-preempt-end', (_, tabId, agentId, interactions) => {
 ipcMain.on('user-log', (_, message) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'user_log', message }));
+  }
+});
+
+ipcMain.on('list-skills', () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'list_skills' }));
+  }
+});
+
+ipcMain.on('save-skill', (_, name, description, text) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'save_skill', name, description, text }));
+  }
+});
+
+ipcMain.on('delete-skill', (_, name) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'delete_skill', name }));
   }
 });
 

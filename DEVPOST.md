@@ -1,3 +1,13 @@
+## Quick read
+
+Vroom is a **multi-agent browser automation system** where a coordinator decomposes your task and spawns parallel executors on separate browser tabs. Agents navigate purely by **vision** — they screenshot the page and use `gemini-3-flash-preview` (via the `google-genai` SDK) to figure out where to click. No DOM access, no page APIs. The agent can only click on what you can see, so you always know what it's doing.
+
+Agents talk to each other and to you through a shared audio channel powered by `gemini-2.5-flash-native-audio-preview` through the Gemini Live API, each with a **distinct voice**. A multiplexer enforces one speaker at a time using a pipelined spotlight system. You can **barge in** at any moment: by voice, text, or by taking manual control of a tab, and agents will course correct without restarting.
+
+Every executor gets a **contract** with specific commitments. If it fails, the coordinator knows exactly what was done and what's left, and can retry on the same tab. The whole thing runs on **Google Cloud** — Cloud Run, Cloud SQL, Artifact Registry, Cloud Build — defined in Terraform.
+
+---
+
 ## Inspiration
 
 Most of us have probably tried using browser agents in some way, most likely to carry out the mundane, repetitive tasks we'd rather not do ourselves. And it's very likely we weren't too impressed with the results. They're usually slow, and the quality of work drops over time. That's kinda unexpected for a system whose whole thing is being smarter, more efficient, and faster than humans.
@@ -19,7 +29,7 @@ The philosophy I'm going for here is this: given a task, the execution should be
 So, that's why I created Vroom (Virtual Room). Here is how it solves the three problems:
 
 1. **Separating intent from execution** is one of the key contributions of Vroom. We have a coordinator that extracts instructions out of the user's prompt and then spawn and attach executor agents to browser tabs. These executor agents are the ones that do the actual work and they can do it in parallel. This is actually a twofer: having smaller more focused executors would mean that the context window remains lean, so the agents are less likely to forget anything. So the first two problems are solved.
-2. The second contribution of Vroom is the concept of **preemption** (in the context of agents). I will explain more below, but this allows you to add on to your instructions without needing to stop the agent mid-execution, and they will course correct automatically. This solves the third problem.
+2. The second contribution of Vroom is the concept of **preemption**, or barge-in, in the context of agents. I will explain more below, but this allows you to add on to your instructions without needing to stop the agent mid-execution, and they will course correct automatically. This solves the third problem.
 
 ![Conventional vs Vroom](https://raw.githubusercontent.com/kavishsathia/vroom/main/assets/conventional_vs_vroom.png)
 
@@ -29,7 +39,7 @@ To understand exactly what Vroom does, we can look at its 2 facets: Coordinators
 
 ### Coordinators
 
-You start in an empty meeting room. You think there's no one but there's actually a coordinator waiting for you to say something. You either say your prompt in the chatbox or you voice it out, then the coordinator (powered by `gemini-3-flash-preview`) will decompose the task into subtasks and spawn executors for each one. Each executor will be attached to a tab and they start executing the subtask on that tab.
+You start in an empty meeting room. You think there's no one but there's actually a coordinator waiting for you to say something. You either say your prompt in the chatbox or you voice it out, then the coordinator (powered by `gemini-3-flash-preview` via the `google-genai` SDK) will decompose the task into subtasks and spawn executors for each one. Each executor will be attached to a tab and they start executing the subtask on that tab.
 
 #### Tab lifecycle
 
@@ -37,25 +47,27 @@ Is the executor and the tab spawned together? They can be, but you can also **br
 
 ![Tab lifecycle](https://raw.githubusercontent.com/kavishsathia/vroom/main/assets/tab_lifecycle.png)
 
-#### Failure and contracts
+#### Failure, contracts, and error recovery
 
 A question that's usually left unanswered is: what if the executor fails? In the conventional paradigm, the burden of knowing what was done and what is yet to be done is offloaded to you, the user! In the Vroom paradigm, since we have one more layer managing intent (the coordinator), it can afford to spawn another agent to retry on your behalf.
 
 But we have to be careful on what we retry because tasks are usually **not idempotent**. Adding 10 skills to Linkedin can fail after 5 skills are added but that doesn't mean you should retry adding 10 skills again, you should only add 5 more.
 
-To solve this, I developed the concept of a **contract**. The coordinator agent initially writes a detailed contract that the executor has to meet, and the executor will update this contract as it completes the commitments. At the end, regardless of outcome, the contract is handed back to the coordinator who now knows exactly what went down. Since the browser tab's lifecycle is detached from that of the agent, the coordinator can now attach another agent to the browser tab with the leftover tasks.
+To solve this, I developed the concept of a **contract**. The coordinator agent initially writes a detailed contract that the executor has to meet, and the executor will update this contract as it completes the commitments. At the end, regardless of outcome, the contract is handed back to the coordinator who now knows exactly what went down. Since the browser tab's lifecycle is detached from that of the agent, the coordinator can now attach another agent to the browser tab with the leftover tasks. This is how Vroom handles **error recovery**: API timeouts, page loads that fail, or agents that get stuck are all caught by the contract system, and the coordinator can retry with full knowledge of what was already done.
 
 ![Contract lifecycle](https://raw.githubusercontent.com/kavishsathia/vroom/main/assets/contract_lifecycle.png)
 
 ### Executor
 
-All the executor knows is the contract and the tab, it is more of a workhorse as compared to the coordinator. It also runs on `gemini-3-flash-preview`, using its vision capabilities to screenshot the page and figure out where to click. The executor is an agent that can: get context (this is the **crown jewel** of this architecture, so I'll explain it in its own deserved section), type, click, scroll, press keys, wait, pause, log, speak, watch and learn.
+All the executor knows is the contract and the tab, it is more of a workhorse as compared to the coordinator. It also runs on `gemini-3-flash-preview` through the `google-genai` SDK, using its vision capabilities to screenshot the page and figure out where to click. This is a deliberate design choice: the agent **never touches the DOM and never calls page APIs**. It can only click on what the user can see. This means the user always knows exactly what the agent is doing, and the agent can't do things behind the scenes that the user can't observe. It also keeps the agent **grounded** in the actual visual state of the page, so there are no hallucinated selectors or stale DOM references.
+
+The executor is an agent that can: get context (this is the **crown jewel** of this architecture, so I'll explain it in its own deserved section), type, click, scroll, press keys, wait, pause, log, speak, watch and learn.
 
 Notice pause, log, speak, watch and learn. These are the ones that go beyond the conventional paradigm. I'll cover speak first, and the others land naturally.
 
 #### Interprocess communication
 
-In parallel process in an operating system, there is a need to communicate to each other, this mechanism is known as **interprocess communication**. When the agents are working together to add unique skills to my Linkedin, they have to communicate with each other so that they don't add the same skills. In a Zoom meeting, it will look like the agents are speaking to each other: you will literally hear them speaking through audio, generated via the `gemini-2.5-flash-native-audio-preview` model through the Gemini Live API.
+In parallel process in an operating system, there is a need to communicate to each other, this mechanism is known as **interprocess communication**. When the agents are working together to add unique skills to my Linkedin, they have to communicate with each other so that they don't add the same skills. In a Zoom meeting, it will look like the agents are speaking to each other: you will literally hear them speaking through audio, generated via the `gemini-2.5-flash-native-audio-preview` model through the Gemini Live API. Each agent gets its own distinct voice from the voice pool (Alice speaks with Kore, Bob with Puck, Carol with Aoede), so you can tell who's talking without looking at the screen.
 
 #### Synchronization
 
@@ -63,7 +75,7 @@ There's an important invariant here: **agents should never talk over each other*
 
 Now, let's say each agent is adding 10 skills, should they speak each one out loud? Probably not. There needs to be a more lightweight method of speaking without having to generate audio. And that will just be pure text, for this project, I decided to have it as an append only log. Agents can log their messages, and users can add to this log as well.
 
-#### Preemption
+#### Preemption (barge-in)
 
 We have seen auditory and textual preemption, that is course correction through audio and text. But really, the best way to preempt is to literally stop the agent and do things yourself, the original way. That is where **watch** comes in: you can chip in and start doing things on the website and your agent will watch those actions. Then you can ask your agent to continue.
 
@@ -151,7 +163,7 @@ The multiplexer is the instrument that enforces one-at-a-time speaking, and it i
 
 Here is how it works: right after an agent generates a message, and right before it is played out, the message is broadcasted to all the agents. This point in time is called the **beginning of a spotlight**.
 
-In this system, any agent can just **claim a spotlight** by being the first to speak. Let's say Agent B decides to reply to the earlier message that was broadcasted. Note that the earlier message is still being played out via audio. Agent B will respond via text and the TTS (streamed through the Gemini Live API) will start while that audio is still being played out. When the audio finishes playing, agent B's message will immediately start playing because the TTS had already started before. When this new audio starts playing, it is the end of the previous spotlight, and the beginning of a new one.
+In this system, any agent can just **claim a spotlight** by being the first to speak. Let's say Agent B decides to reply to the earlier message that was broadcasted. Note that the earlier message is still being played out via audio. Agent B will respond via text and the TTS (streamed through the `google-genai` SDK's Live API) will start while that audio is still being played out. When the audio finishes playing, agent B's message will immediately start playing because the TTS had already started before. When this new audio starts playing, it is the end of the previous spotlight, and the beginning of a new one.
 
 It is essentially inspired by a **CPU pipeline**, to increase throughput and reduce latency. And it also makes sure no two agents speak at once.
 
@@ -163,7 +175,7 @@ The Electron app and the Python server talk to each other over a **single WebSoc
 
 The server itself is deployed on Google Cloud Run, which means it **scales down to zero** when no one is using it and spins up when someone connects. The database is a Cloud SQL Postgres instance sitting in the same region, connected through a Unix socket so there's no public IP exposed.
 
-The whole infra is defined in **Terraform**, so spinning up a new environment is just a `terraform apply`. And for CI/CD, pushes to main trigger a Cloud Build pipeline that builds the Docker image and deploys it to Cloud Run automatically. On the GitHub side, there's a separate Actions workflow that runs lint and tests on every push and PR, and a release workflow that builds Electron binaries for Mac, Windows, and Linux when you tag a version.
+The whole infra is defined in **Terraform**, so spinning up a new environment is just a `terraform apply`. And for CI/CD, pushes to main trigger a **Cloud Build** pipeline that builds the Docker image, pushes it to **Artifact Registry**, and deploys it to Cloud Run automatically. On the GitHub side, there's a separate Actions workflow that runs lint and tests on every push and PR, and a release workflow that builds Electron binaries for Mac, Windows, and Linux when you tag a version.
 
 ## Challenges we ran into
 

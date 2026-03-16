@@ -142,6 +142,22 @@ class Session:
                 elif data["type"] == "resume":
                     self.multiplexer.resume()
                     await self.send_status("Agents resumed")
+                elif data["type"] == "list_skills":
+                    skills = await self.skill_store.list_skills()
+                    await self.ws.send(json.dumps({"type": "skills_list", "skills": skills}))
+                elif data["type"] == "save_skill":
+                    name = data["name"]
+                    description = data.get("description", "")
+                    text = data.get("text", "")
+                    print(f"[skills] Saving: {name}")
+                    await self.skill_store.add_skill(name, description, text)
+                    print(f"[skills] Saved: {name}")
+                    await self.ws.send(json.dumps({"type": "skill_saved", "name": name}))
+                elif data["type"] == "delete_skill":
+                    name = data["name"]
+                    await self.skill_store.delete_skill(name)
+                    skills = await self.skill_store.list_skills()
+                    await self.ws.send(json.dumps({"type": "skills_list", "skills": skills}))
 
         except websockets.exceptions.ConnectionClosed:
             print(f"[session] User {self.user_id} disconnected")

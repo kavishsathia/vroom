@@ -17,6 +17,9 @@ class SkillStore:
     async def add_skill(self, name, description, text):
         await db.add_skill(self.pool, self.user_id, name, description, text)
 
+    async def delete_skill(self, name):
+        await db.delete_skill(self.pool, self.user_id, name)
+
     async def replace_text(self, name, old_text, new_text):
         return await db.replace_skill_text(self.pool, self.user_id, name, old_text, new_text)
 

@@ -16,6 +16,11 @@ contextBridge.exposeInMainWorld('vroom', {
   visualPreemptEnd: (tabId, agentId, interactions) => ipcRenderer.send('visual-preempt-end', tabId, agentId, interactions),
   onMessage: (callback) => ipcRenderer.on('message', (_, data) => callback(data)),
 
+  // Skills
+  listSkills: () => ipcRenderer.send('list-skills'),
+  saveSkill: (name, description, text) => ipcRenderer.send('save-skill', name, description, text),
+  deleteSkill: (name) => ipcRenderer.send('delete-skill', name),
+
   // Settings & Auth
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
