@@ -21,8 +21,6 @@
   <a href="https://kavishsathia.com/writing/browser-agents">Full writeup</a>
 </p>
 
-https://github.com/user-attachments/assets/demo.mp4
-
 ---
 
 ## Why
@@ -46,13 +44,13 @@ graph TD
     Electron -- "WebSocket" --> Server
 
     subgraph Server["Python Server"]
-        EX["Extractor\nDecomposes task · Spawns executors · Reviews contracts"]
-        EX --> A1["Agent A (Alice)\nTab 1"]
-        EX --> A2["Agent B (Bob)\nTab 2"]
-        EX --> A3["Agent C (Carol)\nTab 3"]
-        A1 & A2 & A3 --> MUX["Multiplexer\nShared audio · Voice pool · Preemption"]
-        A1 & A2 & A3 --> CO["Contracts\nPer-agent commitments"]
-        A1 & A2 & A3 --> SK["Skills\nPer-user knowledge base"]
+        EX["Extractor — Decomposes task · Spawns executors · Reviews contracts"]
+        EX --> A1["Agent A (Alice) — Tab 1"]
+        EX --> A2["Agent B (Bob) — Tab 2"]
+        EX --> A3["Agent C (Carol) — Tab 3"]
+        A1 & A2 & A3 --> MUX["Multiplexer — Shared audio · Voice pool · Preemption"]
+        A1 & A2 & A3 --> CO["Contracts — Per-agent commitments"]
+        A1 & A2 & A3 --> SK["Skills — Per-user knowledge base"]
     end
 
     Server --> DB[("PostgreSQL\n(Cloud SQL)")]
