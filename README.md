@@ -53,7 +53,7 @@ graph TD
         A1 & A2 & A3 --> SK["Skills — Per-user knowledge base"]
     end
 
-    Server --> DB[("PostgreSQL\n(Cloud SQL)")]
+    Server --> DB[("PostgreSQL — Cloud SQL")]
 ```
 
 ### Core components
