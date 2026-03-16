@@ -15,6 +15,9 @@ debug/
 *.tfstate.backup
 .terraform/
 
+# Claude
+.claude/
+
 # Electron
 electron/node_modules/
 electron/package-lock.json
