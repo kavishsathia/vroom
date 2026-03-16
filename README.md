@@ -21,6 +21,8 @@
   <a href="https://kavishsathia.com/writing/browser-agents">Full writeup</a>
 </p>
 
+https://github.com/user-attachments/assets/demo.mp4
+
 ---
 
 ## Why
@@ -33,50 +35,27 @@ Vroom separates intent from execution, then parallelizes it.
 
 ## Architecture
 
-```
-                          ┌─────────────────────────────────────────────┐
-                          │              Electron Desktop               │
-                          │                                             │
-                          │  ┌─────────┐ ┌─────────┐ ┌─────────┐      │
-                          │  │  Tab 1  │ │  Tab 2  │ │  Tab 3  │ ...  │
-                          │  │(webview)│ │(webview)│ │(webview)│      │
-                          │  └────┬────┘ └────┬────┘ └────┬────┘      │
-                          │       │           │           │            │
-                          │  Live screenshots, clicks, typing, scroll  │
-                          └───────┼───────────┼───────────┼────────────┘
-                                  │      WebSocket        │
-                          ┌───────┴───────────┴───────────┴────────────┐
-                          │              Python Server                  │
-                          │                                             │
-                          │  ┌───────────────────────────────────────┐  │
-                          │  │             Extractor                 │  │
-                          │  │  Breaks task into parallel subtasks   │  │
-                          │  │  Spawns executors, reviews contracts  │  │
-                          │  └──────┬──────────┬──────────┬─────────┘  │
-                          │         │          │          │             │
-                          │    ┌────┴───┐ ┌────┴───┐ ┌───┴────┐       │
-                          │    │Agent A │ │Agent B │ │Agent C │       │
-                          │    │(Alice) │ │(Bob)   │ │(Carol) │       │
-                          │    │  Tab 1 │ │  Tab 2 │ │  Tab 3 │       │
-                          │    └────┬───┘ └────┬───┘ └───┬────┘       │
-                          │         │          │         │              │
-                          │    ┌────┴──────────┴─────────┴─────┐       │
-                          │    │         Multiplexer            │       │
-                          │    │  Shared audio · Voice pool     │       │
-                          │    │  Preemption · Pause/Resume     │       │
-                          │    └────────────────────────────────┘       │
-                          │                                             │
-                          │    ┌──────────┐  ┌───────────┐             │
-                          │    │ Contracts│  │  Skills   │             │
-                          │    │ per agent│  │ per user  │             │
-                          │    └──────────┘  └───────────┘             │
-                          │                                             │
-                          └─────────────────────────────────────────────┘
-                                             │
-                                    ┌────────┴────────┐
-                                    │   PostgreSQL    │
-                                    │  (Cloud SQL)    │
-                                    └─────────────────┘
+```mermaid
+graph TD
+    subgraph Electron["Electron Desktop"]
+        T1["Tab 1 (webview)"]
+        T2["Tab 2 (webview)"]
+        T3["Tab 3 (webview)"]
+    end
+
+    Electron -- "WebSocket" --> Server
+
+    subgraph Server["Python Server"]
+        EX["Extractor\nDecomposes task · Spawns executors · Reviews contracts"]
+        EX --> A1["Agent A (Alice)\nTab 1"]
+        EX --> A2["Agent B (Bob)\nTab 2"]
+        EX --> A3["Agent C (Carol)\nTab 3"]
+        A1 & A2 & A3 --> MUX["Multiplexer\nShared audio · Voice pool · Preemption"]
+        A1 & A2 & A3 --> CO["Contracts\nPer-agent commitments"]
+        A1 & A2 & A3 --> SK["Skills\nPer-user knowledge base"]
+    end
+
+    Server --> DB[("PostgreSQL\n(Cloud SQL)")]
 ```
 
 ### Core components
