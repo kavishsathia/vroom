@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  server:
+    name: Server (lint + test)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          cd server
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio ruff
+
+      - name: Lint
+        run: |
+          cd server
+          ruff check .
+
+      - name: Test
+        run: |
+          cd server
+          pytest tests/ -v
+
+  electron:
+    name: Electron (lint)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: |
+          cd electron
+          npm ci
+
+      - name: Lint
+        run: |
+          cd electron
+          npx --yes eslint main.js renderer.js preload.js --no-eslintrc --rule '{"no-undef": "off", "no-unused-vars": "warn"}' || true
