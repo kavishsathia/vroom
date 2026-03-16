@@ -450,10 +450,10 @@ ipcMain.on('webview-ready', async (_, tabId, webContentsId, requestId) => {
 
     await wc.debugger.sendCommand('Page.startScreencast', {
       format: 'jpeg',
-      quality: 40,
-      maxWidth: 640,
-      maxHeight: 400,
-      everyNthFrame: 2,
+      quality: 85,
+      maxWidth: 1920,
+      maxHeight: 1200,
+      everyNthFrame: 1,
     });
 
     tabs[tabId] = { webContents: wc };

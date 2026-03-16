@@ -590,10 +590,15 @@ function rebuildGridForTaskGroup(taskGroup) {
   // Remove all tab-cards from grid (keep emptyState)
   grid.querySelectorAll('.tab-card').forEach(c => c.remove());
   if (!taskGroup) return;
+  let hasCards = false;
   for (const tabId of taskGroup.tabIds) {
     if (tabs[tabId] && tabs[tabId].card) {
       grid.appendChild(tabs[tabId].card);
+      hasCards = true;
     }
+  }
+  if (hasCards) {
+    emptyState.style.display = 'none';
   }
 }
 
@@ -604,6 +609,10 @@ function switchToGrid() {
   chatSidebar.classList.remove('hidden');
   gridControls.classList.add('visible');
   takeControlBtn.classList.add('hidden');
+  // Hide home page if grid has cards
+  if (grid.querySelector('.tab-card')) {
+    emptyState.style.display = 'none';
+  }
   for (const id in tabs) {
     tabs[id].sidebarTab.classList.remove('focused');
     if (tabs[id].webview) {
