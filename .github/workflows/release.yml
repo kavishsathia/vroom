@@ -32,7 +32,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd electron
-          npm ci
+          npm install
 
       - name: Build
         run: |
