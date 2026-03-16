@@ -32,6 +32,13 @@ Rules:
 - If your speech is rejected, don't keep retrying immediately — do some work first, then try again.
 - Do NOT mark the task as done if you still need to speak. Speak first, then done.
 
+Logging:
+Every browser action (click, type, navigate, scroll) has an optional "log" field. Use it to drop \
+a casual one-liner about what you're doing — it costs nothing extra. Do NOT call the log tool \
+separately just to comment — that wastes a whole step. Only use the standalone log tool when you \
+have no browser action to take (e.g. reporting findings). \
+Have fun with it — crack jokes, roast slow pages, hype up your teammates. You're a coworker, not a robot.
+
 Rules:
 - If the tab shows a blank page, use navigate to go to the right URL first. \
   If the tab already has content, continue working from the current page.
@@ -43,6 +50,12 @@ Rules:
 - Think about the overall task — decide what the next step should be
 - If you are stuck and cannot make progress, use done with an error summary
 - If you have confidently completed the task, use done immediately — do not keep going
+- You MUST call speak before calling done. EVERY TIME. No exceptions. \
+  Speak a short summary of what you did. Then call done on the NEXT step. \
+  If you call done without speaking first, you have failed.
+- THE USER IS THE BOSS. If the user sends a message (via chat or audio) telling you to do something, \
+  DROP whatever you're doing and do exactly what they say. No questions, no "but I was trying to...". \
+  User instructions override everything — your original task, your plan, your commitments. Just do it.
 """
 
 TOOLS = [
@@ -63,6 +76,10 @@ TOOLS = [
                             type="STRING",
                             description="Description of the element being clicked",
                         ),
+                        "log": types.Schema(
+                            type="STRING",
+                            description="Optional casual one-liner to post to the chat log with this action",
+                        ),
                     },
                     required=["box_2d"],
                 ),
@@ -76,6 +93,10 @@ TOOLS = [
                         "text": types.Schema(
                             type="STRING",
                             description="Text to type",
+                        ),
+                        "log": types.Schema(
+                            type="STRING",
+                            description="Optional casual one-liner to post to the chat log with this action",
                         ),
                     },
                     required=["text"],
@@ -103,6 +124,10 @@ TOOLS = [
                             type="BOOLEAN",
                             description="Hold Alt",
                         ),
+                        "log": types.Schema(
+                            type="STRING",
+                            description="Optional casual one-liner to post to the chat log with this action",
+                        ),
                     },
                     required=["key"],
                 ),
@@ -122,6 +147,10 @@ TOOLS = [
                             type="STRING",
                             description="Description of the element being hovered",
                         ),
+                        "log": types.Schema(
+                            type="STRING",
+                            description="Optional casual one-liner to post to the chat log with this action",
+                        ),
                     },
                     required=["box_2d"],
                 ),
@@ -135,6 +164,10 @@ TOOLS = [
                         "url": types.Schema(
                             type="STRING",
                             description="The URL to navigate to",
+                        ),
+                        "log": types.Schema(
+                            type="STRING",
+                            description="Optional casual one-liner to post to the chat log with this action",
                         ),
                     },
                     required=["url"],
@@ -153,6 +186,10 @@ TOOLS = [
                         "amount": types.Schema(
                             type="INTEGER",
                             description="Pixels to scroll (default 400)",
+                        ),
+                        "log": types.Schema(
+                            type="STRING",
+                            description="Optional casual one-liner to post to the chat log with this action",
                         ),
                     },
                     required=["direction"],
@@ -656,6 +693,12 @@ class Agent:
                 return {"summary": summary, "used_skills": list(self.used_skills)}
 
             # Browser actions: click, type, navigate, scroll
+            # Handle inline log field on browser actions
+            inline_log = args.get('log')
+            if inline_log and self.multiplexer:
+                await self.multiplexer.append_log(self.agent_id, inline_log)
+                print(f"[agent:{self.tab_id}] Logged: {inline_log}")
+
             label = args.get('label', args.get('text', args.get('direction', '')))
             await self.server.send_status(
                 f"[Tab {self.tab_id}] Step {step + 1}: {fn} {label}"

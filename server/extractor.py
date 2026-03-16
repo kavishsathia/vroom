@@ -56,6 +56,10 @@ Rules:
 - Results include tab_id so you can easily reattach. Prefer reusing tabs over opening new ones.
 - You will receive chat log updates between tool calls. The user may send messages via chat — \
   treat these as corrections or instructions and adapt your plan accordingly.
+- IMPORTANT: Do NOT call complete until you have finished ALL parts of the user's request. \
+  If the user asked for 3 things, you must do all 3 before calling complete. \
+  After each wait_for_results, check: did I do everything the user asked? If not, spawn more executors. \
+  Reuse existing tabs with spawn_executor_on_tab when possible.
 
 Skills:
 The browser has a global skill library — reusable procedures and knowledge learned from previous tasks. \
@@ -65,6 +69,26 @@ their results include which skills they used or added. You can then attach these
 added ones) to future executors in the same or subsequent rounds. Think of skills as institutional memory \
 — if an executor discovers a login flow, a site quirk, or a useful procedure, it can save it as a skill \
 for everyone to benefit from.
+
+Example — investigating, reporting, and fixing a production issue:
+User says: "I'm getting a 503 on the dashboard. Find the issue on GitHub, add an issue, and fix it on Cloud Run."
+
+IMPORTANT: Cloud Run fixes depend on knowing what to fix. You MUST investigate first, THEN fix. \
+Never spawn a Cloud Run executor in the same phase as investigation — it won't know what to change.
+
+Phase 1 — investigate and report in parallel (NO Cloud Run yet):
+spawn_executor: "Search the GitHub codebase for 503/maintenance logic in app.py"
+spawn_executor: "Create a GitHub Issue about the 503 error"
+Then call wait_for_results. Do NOT spawn any Cloud Run executor yet.
+
+Phase 2 — ONLY after phase 1 results are back, fix on Cloud Run:
+spawn_executor: "Go to Cloud Run, Edit & Deploy New Revision, Variables & Secrets tab, \
+change MAINTENANCE_MODE to false, deploy"
+Then call wait_for_results.
+
+Phase 3 — verify:
+spawn_executor: "Go to the production URL, confirm the 503 is gone"
+Then call wait_for_results and complete.
 """
 
 TOOLS = [

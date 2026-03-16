@@ -536,6 +536,25 @@ document.getElementById('newTabBtn').addEventListener('click', () => {
   createUserTab();
 });
 
+// --- Demo shortcut: Ctrl+Shift+D to spawn preset tabs ---
+const DEMO_TABS = [
+  'https://www.linkedin.com',
+];
+
+function spawnDemoTabs() {
+  for (const url of DEMO_TABS) {
+    createUserTab(url);
+  }
+  log('Demo tabs spawned!', true);
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+    e.preventDefault();
+    spawnDemoTabs();
+  }
+});
+
 urlBar.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     e.preventDefault();
