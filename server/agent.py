@@ -412,7 +412,7 @@ class Agent:
                         ))
                 if ctx.get("visual_preempt"):
                     vp = ctx["visual_preempt"]
-                    text += f"\n\n[USER TOOK MANUAL CONTROL]: The user paused you and manually interacted with the browser. "
+                    text += "\n\n[USER TOOK MANUAL CONTROL]: The user paused you and manually interacted with the browser. "
                     text += f"They performed {len(vp)} click(s). Screenshots after each click are attached below. "
                     text += "Continue from the current page state — the user may have navigated, filled forms, or changed the page."
                     for i, interaction in enumerate(vp):

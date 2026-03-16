@@ -1,5 +1,4 @@
 import time
-import json
 
 
 class Contract:
@@ -28,7 +27,7 @@ class Contract:
         }
 
     def to_agent_prompt(self):
-        lines = [f"Your contract for this task:"]
+        lines = ["Your contract for this task:"]
         for i, c in enumerate(self.commitments):
             marker = {"pending": "[ ]", "done": "[x]", "failed": "[!]"}[c["status"]]
             lines.append(f"  {i}. {marker} {c['text']}")

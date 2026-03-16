@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from multiplexer import Multiplexer, AGENT_POOL
 
 

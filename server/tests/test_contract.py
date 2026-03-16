@@ -1,4 +1,3 @@
-import pytest
 from contract import Contract
 
 

@@ -308,7 +308,7 @@ class Multiplexer:
 
     async def preempt(self):
         """Pause all agents, clear audio, cancel active TTS stream."""
-        print(f"[mux] PREEMPT: pausing pipeline")
+        print("[mux] PREEMPT: pausing pipeline")
         self._resume_event.clear()
         self._spotlight = None
         self._audio_free_at = 0
@@ -316,19 +316,19 @@ class Multiplexer:
         # Cancel the active TTS stream task immediately
         if self._stream_task and not self._stream_task.done():
             self._stream_task.cancel()
-            print(f"[mux] Cancelled stream task")
+            print("[mux] Cancelled stream task")
         if self._on_clear_audio:
             await self._on_clear_audio()
 
     def pause(self):
         """Pause all agents (they block at wait_if_paused)."""
         self._resume_event.clear()
-        print(f"[mux] Pipeline paused")
+        print("[mux] Pipeline paused")
 
     def resume(self):
         """Resume the pipeline."""
         self._resume_event.set()
-        print(f"[mux] Pipeline resumed")
+        print("[mux] Pipeline resumed")
 
     def broadcast_user_audio(self, audio_bytes, mime_type):
         """Store user audio for agents and extractor to pick up."""
