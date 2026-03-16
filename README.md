@@ -170,6 +170,20 @@ pip install pytest pytest-asyncio
 pytest tests/ -v
 ```
 
+## Reproducible Testing
+
+To verify Vroom end-to-end:
+
+1. **Start the server** — follow the Server setup above, ensure `GOOGLE_API_KEY` and `DATABASE_URL` are set in `server/.env`
+2. **Start the Electron app** — follow the Electron setup above, ensure `VROOM_SERVER_URL=ws://localhost:8765` is set in `electron/.env`
+3. **Open browser tabs** — in the Electron app, open 2–3 tabs to any websites (e.g., GitHub, Google Cloud Console, LinkedIn)
+4. **Submit a task** — type a task like "Add these 5 skills to my LinkedIn profile: Python, Go, Terraform, Docker, Kubernetes" and hit enter
+5. **Observe parallel execution** — agents spawn on separate tabs and work simultaneously, each with their own contract
+6. **Test voice preemption** — click the microphone button and speak a correction while agents are working (e.g., "skip Kubernetes, add Rust instead"). Agents will pause, process your audio, and adapt
+7. **Test visual preemption** — click on any tab to take manual control. The agent on that tab pauses. Click around, then release control — the agent resumes from the new page state
+8. **Check contracts** — the logs panel shows each agent's commitments updating in real time (pending → done/failed)
+9. **Check skills** — click the Skills button to view, add, edit, or delete reusable procedures that agents learn across sessions
+
 ## Infrastructure
 
 The server is deployed to Google Cloud Run with Terraform:
